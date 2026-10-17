@@ -13,7 +13,7 @@ Medinex AI is a hospital operations platform with a conversational assistant at 
 
 The first backend slice includes patient registration, sign-in, role-aware appointment access and booking/cancellation, doctor/department search, availability queries, bed and blood summaries, admin data-entry endpoints, audit events, and an authenticated Gemini assistant. Patient registration only creates patient accounts; the initial admin is bootstrapped from local environment variables, and admin-created staff accounts receive their role from the server.
 
-The frontend sign-in, patient registration, role-protected workspaces, and AI assistant now use the API. Public demo workspaces live under `/demo/` and continue to show synthetic sample data.
+The frontend sign-in, patient registration, role-protected workspaces, and AI assistant use the API. In authenticated patient workspaces, the doctor directory, appointment availability and booking, the patient's appointment list, and bed and blood availability use backend endpoints. Public demo workspaces under `/demo/` continue to show synthetic sample data. Dashboards, reporting, and several operations screens are still previews.
 
 The database models include users, patient and doctor profiles, departments, schedules, appointments, wards, beds, blood stock batches, blood stock transactions, and audit logs. Full clinical notes and longitudinal patient records are intentionally outside this first operational slice.
 
@@ -63,6 +63,6 @@ API docs are available at `http://127.0.0.1:8000/docs`; `/health` checks the pro
 
 ## Current limits
 
-The dashboard, appointments, doctor directory, bed/blood summaries, and reports still use synthetic sample data. Live account creation and sign-in require Neon to be configured; live AI replies also require `GEMINI_API_KEY`. The role checks and data access in the backend are a project foundation, not a production deployment review.
+Dashboards, reports, profiles, notifications, and several administrative and clinical operations screens still use synthetic sample data. The live patient appointment and availability flows require the backend, Neon database, and configured hospital schedules and inventory. Live account creation and sign-in require Neon to be configured; live AI replies also require `GEMINI_API_KEY`. The role checks and data access in the backend are a project foundation, not a production deployment review.
 
 The assistant sends each chat message to the configured Google Gemini API and does not persist chat history in this slice. Add an explicit privacy notice and consent flow before inviting users to enter real health information.
