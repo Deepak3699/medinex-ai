@@ -13,6 +13,8 @@ Medinex AI is a hospital operations platform with a conversational assistant at 
 
 The first backend slice includes patient registration, sign-in, role-aware appointment access and booking/cancellation, doctor/department search, availability queries, bed and blood summaries, admin data-entry endpoints, audit events, and an authenticated Gemini assistant. Patient registration only creates patient accounts; the initial admin is bootstrapped from local environment variables, and admin-created staff accounts receive their role from the server.
 
+The frontend sign-in, patient registration, role-protected workspaces, and AI assistant now use the API. Public demo workspaces live under `/demo/` and continue to show synthetic sample data.
+
 The database models include users, patient and doctor profiles, departments, schedules, appointments, wards, beds, blood stock batches, blood stock transactions, and audit logs. Full clinical notes and longitudinal patient records are intentionally outside this first operational slice.
 
 ## Run the frontend
@@ -21,8 +23,11 @@ From the project root:
 
 ```powershell
 npm install
+Copy-Item .env.example .env.local
 npm run dev
 ```
+
+Set `VITE_API_BASE_URL` in `.env.local` if the backend API is running at a different address.
 
 ## Set up the backend and Neon
 
@@ -58,6 +63,6 @@ API docs are available at `http://127.0.0.1:8000/docs`; `/health` checks the pro
 
 ## Current limits
 
-The existing frontend still uses synthetic demo data and has not yet been connected to these API routes. The API needs a Neon connection string and Gemini key supplied locally before live database and AI requests can run. The role checks and data access in the backend are a project foundation, not a production deployment review.
+The dashboard, appointments, doctor directory, bed/blood summaries, and reports still use synthetic sample data. Live account creation and sign-in require Neon to be configured; live AI replies also require `GEMINI_API_KEY`. The role checks and data access in the backend are a project foundation, not a production deployment review.
 
 The assistant sends each chat message to the configured Google Gemini API and does not persist chat history in this slice. Add an explicit privacy notice and consent flow before inviting users to enter real health information.
