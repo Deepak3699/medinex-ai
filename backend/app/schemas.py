@@ -130,3 +130,65 @@ class BloodInventoryAdjustment(BaseModel):
         if value == 0:
             raise ValueError("units_delta cannot be zero")
         return value
+
+
+class PatientDirectoryItem(BaseModel):
+    id: UUID
+    full_name: str
+    email: EmailStr
+    phone: str | None
+    created_at: datetime
+    appointment_count: int
+    latest_appointment_at: datetime | None
+
+
+class BloodRequestCreate(BaseModel):
+    patient_id: UUID | None = None
+    blood_group: str = Field(pattern=r"^(A|B|AB|O)[+-]$")
+    component: str = Field(pattern=r"^(red_cells|platelets|plasma|whole_blood)$")
+    units: int = Field(gt=0, le=10000)
+    urgency: str = Field(default="routine", pattern=r"^(routine|urgent|emergency)$")
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class BloodRequestStatusUpdate(BaseModel):
+    status: str = Field(pattern=r"^(approved|rejected|fulfilled)$")
+
+
+class BloodRequestItem(BaseModel):
+    id: UUID
+    patient_id: UUID | None
+    patient_name: str | None
+    requested_by_id: UUID | None
+    requester_email: EmailStr | None
+    blood_group: str
+    component: str
+    units: int
+    urgency: str
+    reason: str | None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class AuditLogItem(BaseModel):
+    id: UUID
+    actor_email: EmailStr | None
+    actor_role: UserRole | None
+    action: str
+    resource_type: str
+    resource_id: str | None
+    created_at: datetime
+
+
+class NotificationItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    category: str
+    title: str
+    message: str
+    resource_type: str | None
+    resource_id: str | None
+    is_read: bool
+    created_at: datetime

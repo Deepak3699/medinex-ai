@@ -40,3 +40,14 @@
 .theme-dark .service-placeholder,.theme-dark .report-service{background:#203333;border-color:#334747;color:#c4d3d1}
 .theme-dark .metric-delta-neutral{background:#8fa9a5}
 @media(max-width:600px){.inventory-admin-actions{justify-content:flex-start}.admin-create-modal .booking-form{max-height:calc(100vh - 130px)}.admin-directory-panel .table-scroll{margin-left:-4px;margin-right:-4px}}
+
+/* Connected operational records */
+.table-subline{display:block;margin-top:4px;color:#8b989b;font-size:8px;font-weight:450}
+.inventory-footnote{color:#879496;font-size:9px}
+.inline-actions{display:inline-flex;align-items:center;gap:5px}
+.table-action-danger{color:#b75049;border-color:#f1dad7;background:#fff8f7}
+.table-action-danger:hover{border-color:#dba9a4;background:#fff0ef}
+.notification-mark-read{margin-left:8px;white-space:nowrap}
+.status-emergency{color:#a8433f;background:#fff0ef}
+.status-urgent{color:#a36b21;background:#fff6e9}
+.theme-dark .table-subline,.theme-dark .inventory-footnote{color:#a8bbb9}

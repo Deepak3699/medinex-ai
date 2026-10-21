@@ -224,3 +224,56 @@ class AuditLog(Base):
     resource_type: Mapped[str] = mapped_column(String(80))
     resource_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class BloodRequest(Base):
+    __tablename__ = "blood_requests"
+    __table_args__ = (
+        CheckConstraint("blood_group ~ '^(A|B|AB|O)[+-]$'", name="ck_blood_requests_group"),
+        CheckConstraint(
+            "component IN ('red_cells', 'platelets', 'plasma', 'whole_blood')",
+            name="ck_blood_requests_component",
+        ),
+        CheckConstraint("units > 0", name="ck_blood_requests_units"),
+        CheckConstraint("urgency IN ('routine', 'urgent', 'emergency')", name="ck_blood_requests_urgency"),
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected', 'fulfilled')",
+            name="ck_blood_requests_status",
+        ),
+        Index("ix_blood_requests_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    patient_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("patient_profiles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    requested_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    reviewed_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    blood_group: Mapped[str] = mapped_column(String(3))
+    component: Mapped[str] = mapped_column(String(24))
+    units: Mapped[int] = mapped_column(Integer)
+    urgency: Mapped[str] = mapped_column(String(16), default="routine", server_default="routine")
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", server_default="pending")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    __table_args__ = (Index("ix_notifications_recipient_created", "recipient_id", "created_at"),)
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    recipient_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    category: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(160))
+    message: Mapped[str] = mapped_column(String(500))
+    resource_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    resource_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

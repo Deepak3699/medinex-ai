@@ -27,6 +27,7 @@ export const portalNavigation: Record<PortalRole, NavItem[]> = {
     { label: 'My schedule', path: '/doctor/schedule', icon: CalendarDays, group: 'CARE TEAM' },
     { label: 'Appointments', path: '/doctor/appointments', icon: ClipboardList },
     { label: 'Patients', path: '/doctor/patients', icon: Users },
+    { label: 'Notifications', path: '/doctor/notifications', icon: Bell },
     { label: 'My profile', path: '/doctor/profile', icon: UserRound, group: 'ACCOUNT' },
   ],
   admin: [
@@ -41,6 +42,7 @@ export const portalNavigation: Record<PortalRole, NavItem[]> = {
     { label: 'Staff', path: '/admin/staff', icon: UserRound, group: 'INSIGHTS' },
     { label: 'Reports', path: '/admin/reports', icon: ChartNoAxesCombined },
     { label: 'Audit log', path: '/admin/audit-logs', icon: FileClock },
+    { label: 'Notifications', path: '/admin/notifications', icon: Bell },
     { label: 'Settings', path: '/admin/settings', icon: Settings },
   ],
 }
@@ -111,7 +113,7 @@ export const routeTitles: Record<string, { title: string; subtitle: string }> = 
   'blood-requests': { title: 'Blood requests', subtitle: 'Track requests and coordinate with authorized staff.' },
   staff: { title: 'Staff directory', subtitle: 'Hospital team members and role assignments.' },
   reports: { title: 'Reports & analytics', subtitle: 'Review current hospital records and operational summaries.' },
-  'audit-logs': { title: 'Audit log', subtitle: 'A preview of a traceable operations history.' },
+  'audit-logs': { title: 'Audit log', subtitle: 'Review administrator-recorded hospital changes.' },
   settings: { title: 'Workspace settings', subtitle: 'Configure preferences for your hospital workspace.' },
 }
 

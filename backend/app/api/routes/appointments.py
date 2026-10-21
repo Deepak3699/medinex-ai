@@ -13,6 +13,7 @@ from app.core.database import get_db
 from app.models import Appointment, AuditLog, DoctorProfile, PatientProfile, User
 from app.schemas import AppointmentCreate, AppointmentRead, UserRole
 from app.services.availability import available_slot_datetimes
+from app.services.notifications import make_notification
 
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
@@ -72,6 +73,26 @@ def book_appointment(
     try:
         db.flush()
         db.add(AuditLog(actor_id=user.id, action="appointment.book", resource_type="appointment", resource_id=str(appointment.id)))
+        db.add(
+            make_notification(
+                patient.user_id,
+                "appointment",
+                "Appointment confirmed",
+                f"Your appointment with {doctor.full_name} is confirmed.",
+                "appointment",
+                str(appointment.id),
+            )
+        )
+        db.add(
+            make_notification(
+                doctor.user_id,
+                "appointment",
+                "New appointment booked",
+                f"A patient booked an appointment for {local_slot.isoformat()}.",
+                "appointment",
+                str(appointment.id),
+            )
+        )
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -104,6 +125,24 @@ def cancel_appointment(
 
     appointment.status = "cancelled"
     db.add(AuditLog(actor_id=user.id, action="appointment.cancel", resource_type="appointment", resource_id=str(appointment.id)))
+    recipients: set[UUID] = set()
+    if user.role == UserRole.ADMIN.value:
+        recipients.update({appointment.patient.user_id, appointment.doctor.user_id})
+    elif user.role == UserRole.PATIENT.value:
+        recipients.add(appointment.doctor.user_id)
+    elif user.role == UserRole.DOCTOR.value:
+        recipients.add(appointment.patient.user_id)
+    for recipient_id in recipients - {user.id}:
+        db.add(
+            make_notification(
+                recipient_id,
+                "appointment",
+                "Appointment cancelled",
+                "An appointment in your care schedule was cancelled.",
+                "appointment",
+                str(appointment.id),
+            )
+        )
     db.commit()
     db.refresh(appointment)
     return appointment

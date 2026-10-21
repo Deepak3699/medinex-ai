@@ -67,6 +67,55 @@ export type DoctorScheduleInput = {
 export type BedStatus = 'available' | 'reserved' | 'occupied' | 'cleaning' | 'maintenance'
 export type BloodComponent = 'red_cells' | 'platelets' | 'plasma' | 'whole_blood'
 
+export type PaginatedResponse<T> = { items: T[]; total: number; limit: number; offset: number }
+
+export type PatientDirectoryRecord = {
+  id: string
+  full_name: string
+  email: string
+  phone: string | null
+  created_at: string
+  appointment_count: number
+  latest_appointment_at: string | null
+}
+
+export type BloodRequestRecord = {
+  id: string
+  patient_id: string | null
+  patient_name: string | null
+  requested_by_id: string | null
+  requester_email: string | null
+  blood_group: string
+  component: BloodComponent
+  units: number
+  urgency: 'routine' | 'urgent' | 'emergency'
+  reason: string | null
+  status: 'pending' | 'approved' | 'rejected' | 'fulfilled'
+  created_at: string
+  updated_at: string
+}
+
+export type AuditLogRecord = {
+  id: string
+  actor_email: string | null
+  actor_role: UserRole | null
+  action: string
+  resource_type: string
+  resource_id: string | null
+  created_at: string
+}
+
+export type NotificationRecord = {
+  id: string
+  category: string
+  title: string
+  message: string
+  resource_type: string | null
+  resource_id: string | null
+  is_read: boolean
+  created_at: string
+}
+
 export class ApiError extends Error {
   constructor(message: string, readonly status?: number) {
     super(message)
@@ -178,6 +227,41 @@ export function createBed(wardId: string, input: { bed_number: string; status: B
 
 export function addBloodInventory(input: { blood_group: string; component: BloodComponent; units: number; expires_on: string; tested: boolean }, token: string): Promise<{ id: string; blood_group: string; component: string; units: number; expires_on: string; tested: boolean }> {
   return request<{ id: string; blood_group: string; component: string; units: number; expires_on: string; tested: boolean }>('/admin/blood-inventory', { method: 'POST', body: JSON.stringify(input) }, token)
+}
+
+export function listAdminPatients(search: string, token: string): Promise<PaginatedResponse<PatientDirectoryRecord>> {
+  const params = new URLSearchParams({ search, limit: '100' })
+  return request<PaginatedResponse<PatientDirectoryRecord>>(`/admin/patients?${params}`, {}, token)
+}
+
+export function listBloodRequests(token: string, requestStatus?: string): Promise<PaginatedResponse<BloodRequestRecord>> {
+  const params = new URLSearchParams({ limit: '100' })
+  if (requestStatus && requestStatus !== 'all') params.set('request_status', requestStatus)
+  return request<PaginatedResponse<BloodRequestRecord>>(`/admin/blood-requests?${params}`, {}, token)
+}
+
+export function createBloodRequest(input: { patient_id?: string; blood_group: string; component: BloodComponent; units: number; urgency: BloodRequestRecord['urgency']; reason?: string }, token: string): Promise<BloodRequestRecord> {
+  return request<BloodRequestRecord>('/admin/blood-requests', { method: 'POST', body: JSON.stringify(input) }, token)
+}
+
+export function updateBloodRequest(requestId: string, requestStatus: BloodRequestRecord['status'], token: string): Promise<BloodRequestRecord> {
+  return request<BloodRequestRecord>(`/admin/blood-requests/${encodeURIComponent(requestId)}`, { method: 'PATCH', body: JSON.stringify({ status: requestStatus }) }, token)
+}
+
+export function listAuditLogs(token: string): Promise<PaginatedResponse<AuditLogRecord>> {
+  return request<PaginatedResponse<AuditLogRecord>>('/admin/audit-logs?limit=100', {}, token)
+}
+
+export function listNotifications(token: string): Promise<NotificationRecord[]> {
+  return request<NotificationRecord[]>('/notifications/mine?limit=100', {}, token)
+}
+
+export function markNotificationRead(notificationId: string, token: string): Promise<NotificationRecord> {
+  return request<NotificationRecord>(`/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'PATCH' }, token)
+}
+
+export function markAllNotificationsRead(token: string): Promise<void> {
+  return request<void>('/notifications/read-all', { method: 'POST' }, token)
 }
 
 export async function registerPatient(input: { name: string; email: string; password: string }): Promise<void> {

@@ -7,11 +7,14 @@ import { useForm } from 'react-hook-form'
 import type { UseFormRegisterReturn } from 'react-hook-form'
 import {
   addBloodInventory, askAssistant, bookAppointment, cancelAppointment, createBed,
-  createDepartment, createDoctor, createDoctorSchedule, createWard, getDoctorAvailability,
-  listBedAvailability, listBloodAvailability, listDepartments, listDoctors,
-  listMyAppointments, type AppointmentRecord, type BedAvailabilityRecord, type BedStatus,
-  type BloodAvailabilityRecord, type BloodComponent, type DepartmentRecord, type DoctorRecord,
-  type DoctorSlot, type UserRole,
+  createBloodRequest, createDepartment, createDoctor, createDoctorSchedule, createWard,
+  getDoctorAvailability, listAdminPatients, listAuditLogs, listBedAvailability,
+  listBloodAvailability, listBloodRequests, listDepartments, listDoctors,
+  listMyAppointments, listNotifications, markAllNotificationsRead, markNotificationRead,
+  updateBloodRequest, type AppointmentRecord, type AuditLogRecord, type BedAvailabilityRecord,
+  type BedStatus, type BloodAvailabilityRecord, type BloodComponent, type BloodRequestRecord,
+  type DepartmentRecord, type DoctorRecord, type DoctorSlot, type NotificationRecord,
+  type PatientDirectoryRecord, type UserRole,
 } from './api'
 import { AuthProvider, useAuth } from './auth'
 import {
@@ -227,7 +230,7 @@ function ActivityChart({ includeAdmissions = false }: { includeAdmissions?: bool
   </svg>
 }
 
-function Dashboard({ role, appointments, appointmentRecords = [], doctors = [], onBook, demo = false, loadingAppointments = false, user, routeFor }: { role: PortalRole; appointments: typeof demoAppointments; appointmentRecords?: AppointmentRecord[]; doctors?: DoctorRecord[]; onBook: () => void; demo?: boolean; loadingAppointments?: boolean; user?: ReturnType<typeof useAuth>['user']; routeFor: (page: string) => string }) {
+function Dashboard({ role, appointments, appointmentRecords = [], doctors = [], onBook, demo = false, loadingAppointments = false, unreadNotifications = 0, user, routeFor }: { role: PortalRole; appointments: typeof demoAppointments; appointmentRecords?: AppointmentRecord[]; doctors?: DoctorRecord[]; onBook: () => void; demo?: boolean; loadingAppointments?: boolean; unreadNotifications?: number; user?: ReturnType<typeof useAuth>['user']; routeFor: (page: string) => string }) {
   const [bedRows, setBedRows] = useState<BedAvailabilityRecord[]>([])
   const [bloodRows, setBloodRows] = useState<BloodAvailabilityRecord[]>([])
   const [loadingResources, setLoadingResources] = useState(!demo)
@@ -271,7 +274,7 @@ function Dashboard({ role, appointments, appointmentRecords = [], doctors = [], 
   const liveMetrics = patient ? [
     { label: 'Upcoming visits', value: loadingAppointments ? '…' : String(upcomingAppointments.length), delta: upcomingAppointments[0] ? `Next: ${formatSlotTime(upcomingAppointments[0].start_at)}` : 'No upcoming appointments', icon: CalendarDays, color: 'blue' },
     { label: 'Doctors listed', value: String(doctors.length), delta: 'Current directory', icon: Stethoscope, color: 'purple' },
-    { label: 'Notifications', value: '—', delta: 'Feed not connected', icon: Bell, color: 'orange' },
+    { label: 'Unread notifications', value: String(unreadNotifications), delta: 'Account updates', icon: Bell, color: 'orange' },
     { label: 'Health records', value: '—', delta: 'Records service not connected', icon: Heart, color: 'green' },
   ] : doctor ? [
     { label: 'Today’s visits', value: loadingAppointments ? '…' : String(todayAppointments.length), delta: 'From your appointment list', icon: CalendarDays, color: 'blue' },
@@ -296,7 +299,7 @@ function Dashboard({ role, appointments, appointmentRecords = [], doctors = [], 
     <div className="metrics-grid">{metrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}</div>
     <div className="dashboard-main-grid"><section className="panel chart-panel"><SectionTitle title={demo ? patient ? 'Your care activity' : 'Appointments this week' : 'Live operations'} /><div className="chart-legend">{demo ? <><span><i /> Appointments</span><span><i className="legend-soft" /> Admissions</span></> : <span><i /> Current connected data</span>}</div><div className="chart-area">{demo ? <ActivityChart includeAdmissions /> : <div className="chart-empty"><Sparkles size={19} /><strong>Live records are ready</strong><span>Historical charts need a reporting endpoint. Current appointments, doctors and availability are shown in this workspace.</span></div>}</div></section>
       <section className="panel capacity-panel"><SectionTitle title={patient ? 'Care at a glance' : 'Capacity at a glance'} action={<Link className="icon-link" to={routeFor(patient ? 'bed-availability' : 'wards')}><ArrowRight size={15} /></Link>} /><div className="capacity-total"><strong>{demo ? '74' : loadingResources ? '…' : totalBeds ? occupancy : '—'}{(demo || !loadingResources && totalBeds > 0) && <span>%</span>}</strong><span>aggregate occupancy</span></div><div className="capacity-ring-wrap"><div className="capacity-ring" style={!demo && !loadingResources ? { background: `conic-gradient(#58a095 0 ${occupancy}%, #e7efed ${occupancy}% 100%)` } : undefined}><div><strong>{demo ? '34' : loadingResources ? '…' : availableBeds}</strong><span>available</span></div></div></div><div className="capacity-legend"><span><i className="cap-used" /> Occupied <b>{demo ? '90' : loadingResources ? '…' : occupiedBeds}</b></span><span><i className="cap-free" /> Available <b>{demo ? '34' : loadingResources ? '…' : availableBeds}</b></span></div><div className="capacity-caption"><span><LockKeyhole size={12} /> {demo ? 'Aggregate sample count' : resourceError ? 'Hospital resources unavailable' : 'Aggregate hospital inventory'}</span></div></section></div>
-    <div className="dashboard-bottom-grid"><section className="panel appointments-panel"><SectionTitle title={patient ? 'Upcoming appointments' : doctor ? 'Today’s appointments' : 'Recent appointments'} action={<Link className="text-link small-link" to={routeFor('appointments')}>View all <ArrowRight size={14} /></Link>} />{loadingAppointments && !demo ? <EmptyState icon={CalendarDays} title="Loading appointments" body="Fetching appointments connected to your account." /> : <AppointmentTable appointments={visits} role={role} compact />}</section><section className="panel activity-panel"><SectionTitle title={demo ? patient ? 'Your care team' : doctor ? 'Care notes' : 'Operational updates' : 'Workspace updates'} />{demo ? <ActivityList role={role} /> : <EmptyState icon={Bell} title="Activity feed not connected" body="Your live appointments and hospital resources are available in their dedicated pages." />}</section></div>
+    <div className="dashboard-bottom-grid"><section className="panel appointments-panel"><SectionTitle title={patient ? 'Upcoming appointments' : doctor ? 'Today’s appointments' : 'Recent appointments'} action={<Link className="text-link small-link" to={routeFor('appointments')}>View all <ArrowRight size={14} /></Link>} />{loadingAppointments && !demo ? <EmptyState icon={CalendarDays} title="Loading appointments" body="Fetching appointments connected to your account." /> : <AppointmentTable appointments={visits} role={role} compact />}</section><section className="panel activity-panel"><SectionTitle title={demo ? patient ? 'Your care team' : doctor ? 'Care notes' : 'Operational updates' : 'Workspace updates'} />{demo ? <ActivityList role={role} /> : <EmptyState icon={Bell} title="Audit activity is not on this dashboard" body="Appointment updates and reminders are available on your notifications page." />}</section></div>
   </>
 }
 
@@ -437,12 +440,14 @@ function BookModal({ open, doctor, doctors, demo, onClose, onBook }: { open: boo
 }
 
 function BloodAvailability({ admin = false, demo = false }: { admin?: boolean; demo?: boolean }) {
+  const { token } = useAuth()
   const [filter, setFilter] = useState('All groups')
   const [inventory, setInventory] = useState<BloodAvailabilityRecord[]>([])
   const [loading, setLoading] = useState(!demo)
   const [error, setError] = useState('')
   const [refresh, setRefresh] = useState(0)
   const [createOpen, setCreateOpen] = useState(false)
+  const [pendingRequests, setPendingRequests] = useState<number | null>(null)
   const notify = useToast()
   useEffect(() => {
     if (demo) return
@@ -455,6 +460,14 @@ function BloodAvailability({ admin = false, demo = false }: { admin?: boolean; d
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [demo, refresh])
+  useEffect(() => {
+    if (!admin || demo || !token) return
+    let active = true
+    listBloodRequests(token, 'pending')
+      .then((result) => { if (active) setPendingRequests(result.total) })
+      .catch(() => { if (active) setPendingRequests(null) })
+    return () => { active = false }
+  }, [admin, demo, token, refresh])
 
   const groups = demo
     ? demoBlood.filter((item) => filter === 'All groups' || (filter === 'Low stock' ? item.status === 'Low stock' : item.status === 'Available'))
@@ -472,7 +485,7 @@ function BloodAvailability({ admin = false, demo = false }: { admin?: boolean; d
     <div className="inventory-summary">
       <div className="inventory-highlight"><div className="inventory-highlight-icon"><Droplets size={20} /></div><div><span>{demo ? 'Total sample inventory' : 'Available inventory'}</span><strong>{loading ? '…' : totalUnits} <small>units</small></strong><p>{demo ? 'Illustrative counts across 8 blood groups' : `${groupCount} blood groups in hospital stock`}</p></div></div>
       <div className="inventory-mini"><span>{demo ? 'Low stock groups' : 'Blood groups listed'}</span><strong>{demo ? <>3 <small>of 8</small></> : loading ? '…' : groupCount}</strong>{demo ? <StatusPill status="Attention" /> : <span className="inventory-footnote">Tested, unexpired stock only</span>}</div>
-      <div className="inventory-mini"><span>Blood requests</span><strong>—</strong><span className="inventory-footnote">Request tracking service not connected</span></div>
+      <div className="inventory-mini"><span>{admin ? 'Pending requests' : 'Need blood support?'}</span>{admin && !demo ? <><strong>{pendingRequests ?? '—'}</strong><Link className="inventory-footnote" to="/12admin/blood-requests">Open request queue <ArrowRight size={12} /></Link></> : demo && admin ? <><strong>07</strong><span className="inventory-footnote">Sample requests to review</span></> : <span className="inventory-footnote">Contact your hospital care team</span>}</div>
     </div>
     <div className="panel inventory-panel">
       <div className="panel-toolbar"><SectionTitle title="Inventory by blood group and component" action={<label className="sort-select"><Filter size={14} /><select value={filter} onChange={(event) => setFilter(event.target.value)}><option>All groups</option>{demo && <><option>Available</option><option>Low stock</option></>}</select><ChevronDown size={13} /></label>} /></div>
@@ -520,13 +533,13 @@ function BedAvailability({ admin = false, demo = false }: { admin?: boolean; dem
   </>
 }
 
-type AdminCreateKind = 'doctor' | 'department' | 'schedule' | 'ward' | 'bed' | 'blood'
+type AdminCreateKind = 'doctor' | 'department' | 'schedule' | 'ward' | 'bed' | 'blood' | 'blood-request'
 
 function AdminCreateModal({ kind, doctorId, wardId, departments = [], wards = [], onClose, onSaved }: { kind: AdminCreateKind; doctorId?: string; wardId?: string; departments?: DepartmentRecord[]; wards?: BedAvailabilityRecord[]; onClose: () => void; onSaved: () => void }) {
   const { token } = useAuth()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const title: Record<AdminCreateKind, string> = { doctor: 'Add a doctor', department: 'Add a department', schedule: 'Add a clinic schedule', ward: 'Add a ward', bed: 'Add a bed', blood: 'Receive blood stock' }
+  const title: Record<AdminCreateKind, string> = { doctor: 'Add a doctor', department: 'Add a department', schedule: 'Add a clinic schedule', ward: 'Add a ward', bed: 'Add a bed', blood: 'Receive blood stock', 'blood-request': 'Create a blood request' }
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!token) { setError('Your session expired. Sign in again to continue.'); return }
@@ -546,8 +559,10 @@ function AdminCreateModal({ kind, doctorId, wardId, departments = [], wards = []
         await createWard({ name: value('name'), ward_type: value('ward_type') }, token)
       } else if (kind === 'bed') {
         await createBed(value('ward_id'), { bed_number: value('bed_number'), status: value('status') as BedStatus }, token)
-      } else {
+      } else if (kind === 'blood') {
         await addBloodInventory({ blood_group: value('blood_group'), component: value('component') as BloodComponent, units: Number(value('units')), expires_on: value('expires_on'), tested: values.get('tested') === 'on' }, token)
+      } else {
+        await createBloodRequest({ blood_group: value('blood_group'), component: value('component') as BloodComponent, units: Number(value('units')), urgency: value('urgency') as BloodRequestRecord['urgency'], ...(value('reason') ? { reason: value('reason') } : {}) }, token)
       }
       onSaved()
       onClose()
@@ -564,7 +579,7 @@ function AdminCreateModal({ kind, doctorId, wardId, departments = [], wards = []
     {kind === 'schedule' && <><label className="form-field"><span>Clinic day</span><select name="weekday" defaultValue="0">{['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label>{field('Starts at', 'start_time', 'time')}{field('Ends at', 'end_time', 'time')}<label className="form-field"><span>Appointment length</span><select name="slot_minutes" defaultValue="30">{[15, 20, 30, 45, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}</select></label><p className="field-hint">Uses Monday = 0 through Sunday = 6, as required by the hospital schedule.</p></>}
     {kind === 'ward' && <>{field('Ward name', 'name')}<label className="form-field"><span>Care type</span><select name="ward_type" defaultValue="general"><option value="general">General</option><option value="icu">ICU</option><option value="maternity">Maternity</option><option value="pediatrics">Pediatrics</option><option value="emergency">Emergency</option><option value="surgical">Surgical</option></select></label></>}
     {kind === 'bed' && <><label className="form-field"><span>Ward</span><select name="ward_id" defaultValue={wardId ?? wards[0]?.ward_id ?? ''} required>{wards.map((ward) => <option key={ward.ward_id} value={ward.ward_id}>{ward.ward}</option>)}</select></label>{field('Bed number', 'bed_number')}<label className="form-field"><span>Initial status</span><select name="status" defaultValue="available">{(['available', 'reserved', 'occupied', 'cleaning', 'maintenance'] as const).map((status) => <option key={status} value={status}>{status[0].toUpperCase() + status.slice(1)}</option>)}</select></label>{wards.length === 0 && <p className="field-hint">Create a ward before adding a bed.</p>}</>}
-    {kind === 'blood' && <><label className="form-field"><span>Blood group</span><select name="blood_group" defaultValue="O+">{['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].map((group) => <option key={group}>{group}</option>)}</select></label><label className="form-field"><span>Component</span><select name="component" defaultValue="red_cells">{[['red_cells', 'Red cells'], ['platelets', 'Platelets'], ['plasma', 'Plasma'], ['whole_blood', 'Whole blood']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{field('Units received', 'units', 'number', { min: 1, max: 10000 })}{field('Expiry date', 'expires_on', 'date', { min: localDateValue() })}<label className="checkbox-field"><input type="checkbox" name="tested" defaultChecked /> <span>Screening completed and tested</span></label><p className="field-hint">Only tested, unexpired stock appears in availability results.</p></>}
+    {(kind === 'blood' || kind === 'blood-request') && <><label className="form-field"><span>Blood group</span><select name="blood_group" defaultValue="O+">{['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].map((group) => <option key={group}>{group}</option>)}</select></label><label className="form-field"><span>Component</span><select name="component" defaultValue="red_cells">{[['red_cells', 'Red cells'], ['platelets', 'Platelets'], ['plasma', 'Plasma'], ['whole_blood', 'Whole blood']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{field(kind === 'blood' ? 'Units received' : 'Units requested', 'units', 'number', { min: 1, max: 10000 })}{kind === 'blood' ? <>{field('Expiry date', 'expires_on', 'date', { min: localDateValue() })}<label className="checkbox-field"><input type="checkbox" name="tested" defaultChecked /> <span>Screening completed and tested</span></label><p className="field-hint">Only tested, unexpired stock appears in availability results.</p></> : <><label className="form-field"><span>Urgency</span><select name="urgency" defaultValue="routine"><option value="routine">Routine</option><option value="urgent">Urgent</option><option value="emergency">Emergency</option></select></label>{field('Reason or service area (optional)', 'reason', 'text', { required: false, maxLength: 500 })}<p className="field-hint">Requests are reviewed by an administrator. Fulfilling a request reduces eligible inventory.</p></>}</>}
     {error && <p className="field-error" role="alert">{error}</p>}<Button type="submit" className="full-width" disabled={busy || (kind === 'bed' && wards.length === 0)}>{busy ? 'Saving…' : 'Save record'} <ArrowRight size={15} /></Button></form></section></div>
 }
 
@@ -629,8 +644,105 @@ function AdminDepartmentsPage({ search }: { search: string }) {
   </>
 }
 
-function ServiceUnavailablePage({ title, detail, icon: Icon = CircleHelp }: { title: string; detail: string; icon?: LucideIcon }) {
-  return <><div className="list-page-intro"><div><h1>{title}</h1><p>{detail}</p></div><span className="demo-pill"><span /> FRONTEND READY</span></div><section className="panel service-placeholder"><EmptyState icon={Icon} title="Waiting for a hospital data endpoint" body="This screen is prepared, but the current backend does not provide the records needed to show verified live data here." /><div className="inventory-disclaimer"><ShieldCheck size={15} /><span>No sample patient, staff, request, or audit records are shown in the authenticated workspace.</span></div></section></>
+function AdminPatientDirectoryPage({ search }: { search: string }) {
+  const { token } = useAuth()
+  const [patients, setPatients] = useState<PatientDirectoryRecord[]>([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [refresh, setRefresh] = useState(0)
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    setLoading(true)
+    setError('')
+    listAdminPatients(search, token)
+      .then((result) => { if (active) { setPatients(result.items); setTotal(result.total) } })
+      .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'Could not load patient records.') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [search, token, refresh])
+  return <>
+    <div className="list-page-intro"><div><h1>Patient directory</h1><p>Restricted patient account details and appointment counts for hospital administrators.</p></div><button className="export-button" onClick={() => setRefresh((value) => value + 1)}><Activity size={14} /> Refresh</button></div>
+    {error && <p className="field-error" role="alert">{error}</p>}
+    <section className="panel list-panel admin-directory-panel"><div className="list-toolbar"><div className="list-toolbar-info"><strong>{loading ? '…' : total}</strong><span>· Patient accounts</span></div><span className="inventory-footnote">Search uses the workspace search above.</span></div>
+      {loading ? <EmptyState icon={Users} title="Loading patient directory" body="Fetching records available to your administrator account." /> : patients.length ? <div className="table-scroll"><table className="data-table"><thead><tr><th>Patient</th><th>Contact</th><th>Appointments</th><th>Latest appointment</th><th>Account created</th></tr></thead><tbody>{patients.map((patient) => <tr key={patient.id}><td><div className="person-cell"><span className="table-avatar">{userInitials(patient.full_name.replaceAll(' ', '.') + '@medinex')}</span><span><strong>{patient.full_name}</strong><small className="table-code">PAT-{patient.id.slice(0, 8).toUpperCase()}</small></span></div></td><td><strong>{patient.email}</strong><small className="table-subline">{patient.phone || 'Phone not provided'}</small></td><td>{patient.appointment_count}</td><td>{patient.latest_appointment_at ? new Date(patient.latest_appointment_at).toLocaleDateString() : 'No appointments'}</td><td>{new Date(patient.created_at).toLocaleDateString()}</td></tr>)}</tbody></table></div> : <EmptyState icon={Users} title={search ? 'No matching patients' : 'No patient accounts yet'} body={search ? 'Try another name, email or phone number.' : 'Patient accounts will appear here after registration.'} />}
+      {total > patients.length && <div className="table-pagination"><span>Showing {patients.length} of {total}. Refine search to find more.</span></div>}
+    </section>
+  </>
+}
+
+function AdminBloodRequestsPage({ search }: { search: string }) {
+  const { token } = useAuth()
+  const notify = useToast()
+  const [requests, setRequests] = useState<BloodRequestRecord[]>([])
+  const [filter, setFilter] = useState('all')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [busyId, setBusyId] = useState('')
+  const [refresh, setRefresh] = useState(0)
+  const [createOpen, setCreateOpen] = useState(false)
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    setLoading(true)
+    setError('')
+    listBloodRequests(token, filter)
+      .then((result) => { if (active) setRequests(result.items) })
+      .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'Could not load blood requests.') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [filter, token, refresh])
+  const rows = requests.filter((request) => `${request.patient_name ?? ''} ${request.requester_email ?? ''} ${request.blood_group} ${request.component} ${request.reason ?? ''}`.toLowerCase().includes(search.toLowerCase()))
+  const transition = async (request: BloodRequestRecord, status: BloodRequestRecord['status']) => {
+    if (!token) return
+    setBusyId(request.id)
+    try {
+      await updateBloodRequest(request.id, status, token)
+      setRefresh((value) => value + 1)
+      notify(status === 'fulfilled' ? 'Request fulfilled and stock updated.' : `Request ${status}.`)
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'Could not update the blood request.'
+      setError(message)
+      notify(message)
+    } finally { setBusyId('') }
+  }
+  return <>
+    <div className="list-page-intro"><div><h1>Blood requests</h1><p>Review requests and issue stock only when tested, unexpired inventory is available.</p></div><Button onClick={() => setCreateOpen(true)}>Create request <Droplets size={15} /></Button></div>
+    {error && <p className="field-error" role="alert">{error}</p>}
+    <section className="panel list-panel"><div className="list-toolbar"><div className="list-toolbar-info"><strong>{loading ? '…' : rows.length}</strong><span>· {filter === 'all' ? 'All blood requests' : `${filter} requests`}</span></div><label className="sort-select"><Filter size={14} /><select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="all">All statuses</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="fulfilled">Fulfilled</option></select><ChevronDown size={13} /></label></div>
+      {loading ? <EmptyState icon={Droplets} title="Loading blood requests" body="Fetching the hospital request queue." /> : rows.length ? <div className="table-scroll"><table className="data-table"><thead><tr><th>Request</th><th>Patient / requester</th><th>Need</th><th>Urgency</th><th>Created</th><th>Status</th><th>Review</th></tr></thead><tbody>{rows.map((request) => <tr key={request.id}><td className="table-code">REQ-{request.id.slice(0, 8).toUpperCase()}<small className="table-subline">{request.reason || 'No reason supplied'}</small></td><td><strong>{request.patient_name || 'Hospital request'}</strong><small className="table-subline">{request.requester_email || 'Requester account unavailable'}</small></td><td>{request.units} × {request.blood_group} · {request.component.replaceAll('_', ' ')}</td><td><StatusPill status={request.urgency} /></td><td>{new Date(request.created_at).toLocaleString()}</td><td><StatusPill status={request.status} /></td><td>{request.status === 'pending' ? <span className="inline-actions"><button className="table-action" disabled={busyId === request.id} onClick={() => void transition(request, 'approved')}>Approve</button><button className="table-action table-action-danger" disabled={busyId === request.id} onClick={() => void transition(request, 'rejected')}>Reject</button></span> : request.status === 'approved' ? <button className="table-action" disabled={busyId === request.id} onClick={() => void transition(request, 'fulfilled')}>{busyId === request.id ? 'Updating…' : 'Fulfill'}</button> : <span className="table-action-muted">Closed</span>}</td></tr>)}</tbody></table></div> : <EmptyState icon={Droplets} title="No requests in this view" body={search ? 'Try a different search term.' : 'New blood requests will appear here when submitted.'} />}
+    </section>
+    {createOpen && <AdminCreateModal kind="blood-request" onClose={() => setCreateOpen(false)} onSaved={() => { setFilter('all'); setRefresh((value) => value + 1); notify('Blood request created.') }} />}
+  </>
+}
+
+function AdminAuditLogsPage({ search }: { search: string }) {
+  const { token } = useAuth()
+  const [entries, setEntries] = useState<AuditLogRecord[]>([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [refresh, setRefresh] = useState(0)
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    setLoading(true)
+    setError('')
+    listAuditLogs(token)
+      .then((result) => { if (active) { setEntries(result.items); setTotal(result.total) } })
+      .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'Could not load audit history.') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [token, refresh])
+  const rows = entries.filter((entry) => `${entry.actor_email ?? ''} ${entry.actor_role ?? ''} ${entry.action} ${entry.resource_type} ${entry.resource_id ?? ''}`.toLowerCase().includes(search.toLowerCase()))
+  return <>
+    <div className="list-page-intro"><div><h1>Audit log</h1><p>Recent hospital actions, including who performed each change and which record it affected.</p></div><button className="export-button" onClick={() => setRefresh((value) => value + 1)}><Activity size={14} /> Refresh</button></div>
+    {error && <p className="field-error" role="alert">{error}</p>}
+    <section className="panel list-panel"><div className="list-toolbar"><div className="list-toolbar-info"><strong>{loading ? '…' : total}</strong><span>· Recorded actions</span></div><span className="inventory-footnote">Most recent 100 entries · administrators only</span></div>
+      {loading ? <EmptyState icon={ShieldCheck} title="Loading audit history" body="Fetching recent hospital operations." /> : rows.length ? <div className="table-scroll"><table className="data-table"><thead><tr><th>Action</th><th>Actor</th><th>Resource</th><th>Record reference</th><th>Time</th></tr></thead><tbody>{rows.map((entry) => <tr key={entry.id}><td><strong>{entry.action.replaceAll('.', ' ')}</strong></td><td>{entry.actor_email || 'System / deleted account'}<small className="table-subline">{entry.actor_role || 'Unavailable'}</small></td><td>{entry.resource_type.replaceAll('_', ' ')}</td><td className="table-code">{entry.resource_id || '—'}</td><td>{new Date(entry.created_at).toLocaleString()}</td></tr>)}</tbody></table></div> : <EmptyState icon={ShieldCheck} title={search ? 'No matching audit entries' : 'No actions recorded yet'} body={search ? 'Try a different search term.' : 'Administrative and appointment actions will appear here.'} />}
+    </section>
+  </>
 }
 
 function AssistantPreview({ demo = false }: { demo?: boolean }) {
@@ -764,14 +876,56 @@ function SettingsPage({ role, demo = false }: { role: PortalRole; demo?: boolean
   return <div className="settings-layout"><section className="panel settings-card"><SectionTitle title="Notifications" /><p>Choose the updates you would like to enable for this browser.</p>{settings.map(([id, title, description]) => <div className="setting-row" key={id}><div><strong>{title}</strong><span>{description}</span></div><button role="switch" aria-checked={enabled[id]} className={`switch ${enabled[id] ? 'on' : ''}`} aria-label={title} onClick={() => { setEnabled((state) => ({ ...state, [id]: !state[id] })); setSaved(false) }}><i /></button></div>)}</section><section className="panel settings-card"><SectionTitle title="Workspace preferences" /><div className="setting-row"><div><strong>Hospital timezone</strong><span>Times follow your browser until the hospital sets a timezone.</span></div><span className="pref-value">{demo ? 'Asia/Kolkata · preview' : Intl.DateTimeFormat().resolvedOptions().timeZone}</span></div><div className="setting-row"><div><strong>Data environment</strong><span>{demo ? 'Synthetic preview content.' : 'Authenticated hospital workspace.'}</span></div><span className="demo-pill"><span /> {demo ? 'SAMPLE DATA' : 'ACCOUNT ACCESS'}</span></div><Button variant="secondary" onClick={save}>{saved ? 'Saved' : 'Save preferences'} <Check size={15} /></Button></section></div>
 }
 
-function NotificationsPage({ demo = false }: { demo?: boolean }) {
+function NotificationsPage({ demo = false, onUnreadChange }: { demo?: boolean; onUnreadChange?: (count: number) => void }) {
   const [read, setRead] = useState(false)
+  const [liveItems, setLiveItems] = useState<NotificationRecord[]>([])
+  const [loading, setLoading] = useState(!demo)
+  const [error, setError] = useState('')
+  const { token } = useAuth()
+  const notify = useToast()
   const items: { title: string; text: string; time: string; icon: LucideIcon }[] = [
     { title: 'Appointment confirmed', text: 'Your visit with Dr. Priya Nair is confirmed for today at 3:30 PM.', time: '10 min ago', icon: CalendarDays },
     { title: 'Reminder · Tomorrow', text: 'You have an upcoming visit with Dr. Arjun Mehta at 10:00 AM.', time: 'Yesterday', icon: Bell },
     { title: 'Profile update', text: 'Your care team information was refreshed.', time: '12 Oct 2026', icon: Users },
   ]
-  return demo ? <section className="panel notifications-panel"><SectionTitle title="Recent sample updates" action={<button className="text-link small-link" onClick={() => setRead(true)}>Mark all as read <Check size={14} /></button>} />{items.map(({ title, text, time, icon: Icon }, index) => <article className={`notification-row ${index === 0 && !read ? 'notification-unread' : ''}`} key={title}><span className="notification-icon"><Icon size={17} /></span><div><strong>{title}</strong><p>{text}</p><small>{time}</small></div>{index === 0 && !read && <i className="notification-dot" />}</article>)}</section> : <section className="panel notifications-panel"><SectionTitle title="Notifications" /><EmptyState icon={Bell} title="No notifications yet" body="The current backend does not include a notification feed. Appointment and inventory data is available in its own workspace pages." /></section>
+  useEffect(() => {
+    if (demo || !token) return
+    let active = true
+    setLoading(true)
+    setError('')
+    listNotifications(token)
+      .then((notifications) => { if (active) { setLiveItems(notifications); onUnreadChange?.(notifications.filter((item) => !item.is_read).length) } })
+      .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'Could not load your notifications.') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [demo, token, onUnreadChange])
+  const markAllRead = async () => {
+    if (demo) { setRead(true); return }
+    if (!token) return
+    try {
+      await markAllNotificationsRead(token)
+      setLiveItems((current) => current.map((item) => ({ ...item, is_read: true })))
+      onUnreadChange?.(0)
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'Could not update notifications.'
+      setError(message)
+      notify(message)
+    }
+  }
+  const markRead = async (item: NotificationRecord) => {
+    if (!token || item.is_read) return
+    try {
+      await markNotificationRead(item.id, token)
+      setLiveItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, is_read: true } : entry))
+      onUnreadChange?.(Math.max(0, liveItems.filter((entry) => !entry.is_read).length - 1))
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'Could not update this notification.'
+      setError(message)
+      notify(message)
+    }
+  }
+  if (demo) return <section className="panel notifications-panel"><SectionTitle title="Recent sample updates" action={<button className="text-link small-link" onClick={() => void markAllRead()}>Mark all as read <Check size={14} /></button>} />{items.map(({ title, text, time, icon: Icon }, index) => <article className={`notification-row ${index === 0 && !read ? 'notification-unread' : ''}`} key={title}><span className="notification-icon"><Icon size={17} /></span><div><strong>{title}</strong><p>{text}</p><small>{time}</small></div>{index === 0 && !read && <i className="notification-dot" />}</article>)}</section>
+  return <section className="panel notifications-panel"><SectionTitle title="Recent updates" action={liveItems.some((item) => !item.is_read) ? <button className="text-link small-link" onClick={() => void markAllRead()}>Mark all as read <Check size={14} /></button> : undefined} />{error && <p className="field-error" role="alert">{error}</p>}{loading ? <EmptyState icon={Bell} title="Loading notifications" body="Fetching updates for your account." /> : liveItems.length ? liveItems.map((item) => { const Icon = item.category === 'appointment' ? CalendarDays : item.category === 'blood_request' ? Droplets : Bell; return <article className={`notification-row ${!item.is_read ? 'notification-unread' : ''}`} key={item.id}><span className="notification-icon"><Icon size={17} /></span><div><strong>{item.title}</strong><p>{item.message}</p><small>{new Date(item.created_at).toLocaleString()}</small></div>{!item.is_read && <button className="text-link small-link notification-mark-read" onClick={() => void markRead(item)}>Mark read</button>}</article> }) : <EmptyState icon={Bell} title="No notifications yet" body="Appointment confirmations and request updates will appear here." />}</section>
 }
 
 function ReportsPage({ demo = false, appointments = [], doctors = [] }: { demo?: boolean; appointments?: typeof demoAppointments; doctors?: DoctorRecord[] }) {
@@ -817,6 +971,7 @@ function PortalLayout({ role, demo = false }: { role: PortalRole; demo?: boolean
   const [doctorsError, setDoctorsError] = useState('')
   const [appointmentsLoading, setAppointmentsLoading] = useState(!demo)
   const [appointmentsError, setAppointmentsError] = useState('')
+  const [unreadNotifications, setUnreadNotifications] = useState(demo ? 3 : 0)
   const nav = portalNavigation[role]
   const pageTitle = routeTitles[page]?.title ?? 'Workspace'
   const openBooking = (doctor?: string) => { setSelectedDoctor(doctor); setBookingOpen(true) }
@@ -854,25 +1009,34 @@ function PortalLayout({ role, demo = false }: { role: PortalRole; demo?: boolean
       .finally(() => { if (active) setAppointmentsLoading(false) })
     return () => { active = false }
   }, [demo, role, token, doctorsLoading, liveDoctors])
-  return <div className={`portal-shell ${dark ? 'theme-dark' : ''}`}><aside className={`portal-sidebar ${menuOpen ? 'sidebar-open' : ''}`}><div className="sidebar-brand-row"><Brand /><button className="mobile-nav-toggle side-close" aria-label="Close navigation" onClick={() => setMenuOpen(false)}><X size={18} /></button></div><div className="workspace-select"><span className="workspace-avatar">{demo ? (role === 'patient' ? 'M' : role === 'doctor' ? 'C' : 'H') : userInitials(user?.email).slice(0, 1)}</span><span><strong>{demo ? (role === 'patient' ? 'Maya’s care' : role === 'doctor' ? 'Care team' : 'Meridian Hospital') : user?.email ?? 'Medinex workspace'}</strong><small>{roleLabels[role]}</small></span><ChevronDown size={14} /></div><div className="sidebar-label">WORKSPACE</div><nav className="sidebar-nav" aria-label="Workspace navigation">{nav.map((item, index) => <div key={item.path}>{item.group && <div className={`nav-group-label ${index ? 'nav-group-spaced' : ''}`}>{item.group}</div>}<NavLink onClick={() => setMenuOpen(false)} to={pathFor(item.path)} className={() => `sidebar-link ${activeRoute === pathFor(item.path) || (activeRoute === pathFor('/admin/wards') && page === 'beds') ? 'active' : ''}`}><item.icon size={17} /><span>{item.label}</span>{demo && item.label === 'Notifications' && <i className="nav-count">3</i>}</NavLink></div>)}</nav><div className="sidebar-bottom"><div className="help-card"><span><CircleHelp size={17} /></span><strong>Need a hand?</strong><small>Our team is here to help.</small><Link to="/contact">Get support <ArrowRight size={13} /></Link></div><div className="sidebar-user"><span className="user-avatar">{demo ? (role === 'patient' ? 'MF' : role === 'doctor' ? 'AR' : 'AM') : userInitials(user?.email)}</span><span><strong>{demo ? (role === 'patient' ? 'Maya Fernandes' : role === 'doctor' ? 'Dr. Ananya Rao' : 'Alex Morgan') : user?.email ?? 'Signed in'}</strong><small>{demo ? (role === 'patient' ? 'Patient' : role === 'doctor' ? 'Cardiologist' : 'Administrator') : roleLabels[role]}</small></span><button aria-label="Sign out" onClick={() => { signOut(); navigate(role === 'admin' ? '/12admin/sign-in' : '/login') }}><LogOut size={16} /></button></div></div></aside>
+  useEffect(() => {
+    if (demo) { setUnreadNotifications(3); return }
+    if (!token) { setUnreadNotifications(0); return }
+    let active = true
+    listNotifications(token)
+      .then((items) => { if (active) setUnreadNotifications(items.filter((item) => !item.is_read).length) })
+      .catch(() => { if (active) setUnreadNotifications(0) })
+    return () => { active = false }
+  }, [demo, token])
+    return <div className={`portal-shell ${dark ? 'theme-dark' : ''}`}><aside className={`portal-sidebar ${menuOpen ? 'sidebar-open' : ''}`}><div className="sidebar-brand-row"><Brand /><button className="mobile-nav-toggle side-close" aria-label="Close navigation" onClick={() => setMenuOpen(false)}><X size={18} /></button></div><div className="workspace-select"><span className="workspace-avatar">{demo ? (role === 'patient' ? 'M' : role === 'doctor' ? 'C' : 'H') : userInitials(user?.email).slice(0, 1)}</span><span><strong>{demo ? (role === 'patient' ? 'Maya’s care' : role === 'doctor' ? 'Care team' : 'Meridian Hospital') : user?.email ?? 'Medinex workspace'}</strong><small>{roleLabels[role]}</small></span><ChevronDown size={14} /></div><div className="sidebar-label">WORKSPACE</div><nav className="sidebar-nav" aria-label="Workspace navigation">{nav.map((item, index) => <div key={item.path}>{item.group && <div className={`nav-group-label ${index ? 'nav-group-spaced' : ''}`}>{item.group}</div>}<NavLink onClick={() => setMenuOpen(false)} to={pathFor(item.path)} className={() => `sidebar-link ${activeRoute === pathFor(item.path) || (activeRoute === pathFor('/admin/wards') && page === 'beds') ? 'active' : ''}`}><item.icon size={17} /><span>{item.label}</span>{item.label === 'Notifications' && (demo ? <i className="nav-count">3</i> : unreadNotifications > 0 ? <i className="nav-count">{unreadNotifications}</i> : null)}</NavLink></div>)}</nav><div className="sidebar-bottom"><div className="help-card"><span><CircleHelp size={17} /></span><strong>Need a hand?</strong><small>Our team is here to help.</small><Link to="/contact">Get support <ArrowRight size={13} /></Link></div><div className="sidebar-user"><span className="user-avatar">{demo ? (role === 'patient' ? 'MF' : role === 'doctor' ? 'AR' : 'AM') : userInitials(user?.email)}</span><span><strong>{demo ? (role === 'patient' ? 'Maya Fernandes' : role === 'doctor' ? 'Dr. Ananya Rao' : 'Alex Morgan') : user?.email ?? 'Signed in'}</strong><small>{demo ? (role === 'patient' ? 'Patient' : role === 'doctor' ? 'Cardiologist' : 'Administrator') : roleLabels[role]}</small></span><button aria-label="Sign out" onClick={() => { signOut(); navigate(role === 'admin' ? '/12admin/sign-in' : '/login') }}><LogOut size={16} /></button></div></div></aside>
     {menuOpen && <button className="sidebar-scrim" aria-label="Close menu" onClick={() => setMenuOpen(false)} />}
-    <div className="portal-main"><header className="portal-header"><button className="mobile-nav-toggle header-menu" aria-label="Open navigation" onClick={() => setMenuOpen(true)}><Menu size={20} /></button><div className="portal-breadcrumb"><Link to={pathFor(`/${role}/dashboard`)}>Workspace</Link><ChevronRight size={14} /><span>{page === 'dashboard' ? 'Overview' : pageTitle}</span></div><div className="portal-header-actions"><label className="portal-search"><Search size={16} /><input placeholder="Search this workspace…" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search workspace" /><kbd>⌘ K</kbd></label><button className="theme-toggle" onClick={() => setDark(!dark)} aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}>{dark ? <Sun size={17} /> : <Moon size={17} />}</button>{role === 'patient' && <button className="header-notification" aria-label="View notifications" onClick={() => navigate(pathFor(`/${role}/notifications`))}><Bell size={17} /><i /></button>}<span className="header-divider" /><span className="header-date">{date}</span><span className="header-avatar">{demo ? (role === 'patient' ? 'MF' : role === 'doctor' ? 'AR' : 'AM') : userInitials(user?.email)}</span></div></header>
+    <div className="portal-main"><header className="portal-header"><button className="mobile-nav-toggle header-menu" aria-label="Open navigation" onClick={() => setMenuOpen(true)}><Menu size={20} /></button><div className="portal-breadcrumb"><Link to={pathFor(`/${role}/dashboard`)}>Workspace</Link><ChevronRight size={14} /><span>{page === 'dashboard' ? 'Overview' : pageTitle}</span></div><div className="portal-header-actions"><label className="portal-search"><Search size={16} /><input placeholder="Search this workspace…" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search workspace" /><kbd>⌘ K</kbd></label><button className="theme-toggle" onClick={() => setDark(!dark)} aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}>{dark ? <Sun size={17} /> : <Moon size={17} />}</button><button className="header-notification" aria-label="View notifications" onClick={() => navigate(pathFor(`/${role}/notifications`))}><Bell size={17} />{(demo || unreadNotifications > 0) && <i />}</button><span className="header-divider" /><span className="header-date">{date}</span><span className="header-avatar">{demo ? (role === 'patient' ? 'MF' : role === 'doctor' ? 'AR' : 'AM') : userInitials(user?.email)}</span></div></header>
       <main className="portal-content">
         {demo && <DemoBanner />}
         {!demo && appointmentsError && <p className="field-error" role="alert">{appointmentsError}</p>}
-        {page === 'dashboard' ? <Dashboard role={role} appointments={appointments} appointmentRecords={appointmentRecords} doctors={liveDoctors} onBook={() => role === 'patient' ? openBooking() : navigate(pathFor(`/${role}/${role === 'doctor' ? 'schedule' : 'appointments'}`))} demo={demo} loadingAppointments={!demo && appointmentsLoading} user={user} routeFor={(target) => pathFor(`/${role}/${target}`)} />
+        {page === 'dashboard' ? <Dashboard role={role} appointments={appointments} appointmentRecords={appointmentRecords} doctors={liveDoctors} onBook={() => role === 'patient' ? openBooking() : navigate(pathFor(`/${role}/${role === 'doctor' ? 'schedule' : 'appointments'}`))} demo={demo} loadingAppointments={!demo && appointmentsLoading} unreadNotifications={unreadNotifications} user={user} routeFor={(target) => pathFor(`/${role}/${target}`)} />
           : role === 'patient' && page === 'doctors' ? <><div className="page-heading"><div><div className="eyebrow eyebrow-muted">YOUR CARE TEAM</div><h1>{routeTitles.doctors.title}</h1><p>{routeTitles.doctors.subtitle}</p></div><Button onClick={() => openBooking()}>Book an appointment <ArrowRight size={15} /></Button></div><DoctorDirectory onBook={openBooking} search={search} doctors={liveDoctors} loading={!demo && doctorsLoading} error={!demo ? doctorsError : ''} demo={demo} /></>
           : role === 'admin' && !demo && (page === 'doctors' || page === 'staff') ? <AdminDoctorsPage search={search} staff={page === 'staff'} />
           : role === 'admin' && !demo && page === 'departments' ? <AdminDepartmentsPage search={search} />
-          : role === 'admin' && !demo && page === 'patients' ? <ServiceUnavailablePage title="Patient directory" detail="Patient records are protected and require an administrator-only listing endpoint." icon={Users} />
-          : role === 'admin' && !demo && page === 'blood-requests' ? <ServiceUnavailablePage title="Blood requests" detail="Blood stock availability is connected. Request queue records and approvals are not exposed by the current backend." icon={HeartPulse} />
-          : role === 'admin' && !demo && page === 'audit-logs' ? <ServiceUnavailablePage title="Audit log" detail="The backend writes audit entries, but it does not yet expose a read-only audit history endpoint." icon={ShieldCheck} />
+          : role === 'admin' && !demo && page === 'patients' ? <AdminPatientDirectoryPage search={search} />
+          : role === 'admin' && !demo && page === 'blood-requests' ? <AdminBloodRequestsPage search={search} />
+          : role === 'admin' && !demo && page === 'audit-logs' ? <AdminAuditLogsPage search={search} />
           : (role === 'patient' && page === 'appointments' || role === 'doctor' && ['appointments', 'schedule', 'patients'].includes(page) || role === 'admin' && page === 'appointments' || demo && role === 'admin' && ['appointments', 'doctors', 'patients', 'departments', 'blood-requests', 'staff', 'audit-logs'].includes(page)) ? <GeneralListPage role={role} page={page} search={search} />
           : (role === 'patient' && page === 'blood-availability' || role === 'admin' && page === 'blood-bank' || demo && role === 'admin' && page === 'blood-availability') ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div><span className="demo-pill"><span /> {demo ? 'SAMPLE INVENTORY' : 'LIVE INVENTORY'}</span></div><BloodAvailability admin={role === 'admin'} demo={demo} /></>
           : (role === 'patient' && page === 'bed-availability' || role === 'admin' && ['wards', 'beds'].includes(page) || demo && role === 'admin' && page === 'bed-availability') ? <><div className="list-page-intro"><div><h1>{page === 'bed-availability' ? routeTitles['bed-availability'].title : 'Wards & beds'}</h1><p>{routeTitles['bed-availability'].subtitle}</p></div></div><BedAvailability admin={role === 'admin'} demo={demo} /></>
           : role === 'patient' && page === 'ai-assistant' ? <><div className="page-heading"><div><div className="eyebrow eyebrow-muted">A LITTLE HELP, WHEN YOU NEED IT</div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div><span className="demo-pill"><span /> {demo ? 'PREVIEW MODE' : 'AI SERVICE'}</span></div><AssistantPreview demo={demo} /></>
           : page === 'profile' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div></div><ProfilePage role={role} demo={demo} user={user} /></>
-          : role === 'patient' && page === 'notifications' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div><span className="demo-pill"><span /> {demo ? 'SAMPLE UPDATES' : 'NO FEED CONNECTED'}</span></div><NotificationsPage demo={demo} /></>
+          : page === 'notifications' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div><span className="demo-pill"><span /> {demo ? 'SAMPLE UPDATES' : 'LIVE UPDATES'}</span></div><NotificationsPage demo={demo} onUnreadChange={setUnreadNotifications} /></>
           : role === 'admin' && page === 'settings' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div></div><SettingsPage role={role} demo={demo} /></>
           : role === 'admin' && page === 'reports' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{demo ? routeTitles[page].subtitle : 'Current record counts from connected services.'}</p></div></div><ReportsPage demo={demo} appointments={appointments} doctors={liveDoctors} /></>
           : <Navigate to={pathFor(`/${role}/dashboard`)} replace />}

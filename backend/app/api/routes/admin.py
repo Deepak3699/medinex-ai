@@ -3,34 +3,43 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import case, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.api.deps import require_roles
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import hash_password
 from app.models import (
+    Appointment,
     AuditLog,
     Bed,
+    BloodRequest,
     BloodInventoryItem,
     BloodInventoryTransaction,
     Department,
     DoctorProfile,
     DoctorSchedule,
+    PatientProfile,
     User,
     Ward,
 )
+from app.services.notifications import make_notification
 from app.schemas import (
+    AuditLogItem,
     BedCreate,
     BedStatusUpdate,
+    BloodRequestCreate,
+    BloodRequestItem,
+    BloodRequestStatusUpdate,
     BloodInventoryAdjustment,
     BloodInventoryCreate,
     DepartmentCreate,
     DoctorCreate,
     DoctorRead,
     DoctorScheduleCreate,
+    PatientDirectoryItem,
     UserRole,
     WardCreate,
 )
@@ -264,3 +273,292 @@ def adjust_blood_inventory(
     _audit(db, user, f"blood_inventory.{action}", "blood_inventory_item", str(item.id))
     db.commit()
     return {"id": str(item.id), "status": item.status, "units_available": item.units}
+
+
+@router.get("/patients")
+def list_patients(
+    search: str = "",
+    limit: int = 50,
+    offset: int = 0,
+    user: User = Depends(admin_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    del user
+    if not 1 <= limit <= 100 or offset < 0:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Use a limit from 1 to 100 and a non-negative offset.")
+
+    appointment_stats = (
+        select(
+            Appointment.patient_id.label("patient_id"),
+            func.count(Appointment.id).label("appointment_count"),
+            func.max(Appointment.start_at).label("latest_appointment_at"),
+        )
+        .group_by(Appointment.patient_id)
+        .subquery()
+    )
+    query = (
+        select(
+            PatientProfile,
+            User,
+            func.coalesce(appointment_stats.c.appointment_count, 0),
+            appointment_stats.c.latest_appointment_at,
+        )
+        .join(User, User.id == PatientProfile.user_id)
+        .outerjoin(appointment_stats, appointment_stats.c.patient_id == PatientProfile.id)
+    )
+    count_query = select(func.count(PatientProfile.id)).join(User, User.id == PatientProfile.user_id)
+    if search.strip():
+        term = f"%{search.strip()}%"
+        filters = [PatientProfile.full_name.ilike(term), User.email.ilike(term)]
+        filters.append(PatientProfile.phone.ilike(term))
+        query = query.where(or_(*filters))
+        count_query = count_query.where(or_(*filters))
+    total = int(db.scalar(count_query) or 0)
+    rows = db.execute(query.order_by(PatientProfile.full_name).limit(limit).offset(offset)).all()
+    items = [
+        PatientDirectoryItem(
+            id=patient.id,
+            full_name=patient.full_name,
+            email=account.email,
+            phone=patient.phone,
+            created_at=patient.created_at,
+            appointment_count=appointment_count,
+            latest_appointment_at=latest_appointment_at,
+        ).model_dump()
+        for patient, account, appointment_count, latest_appointment_at in rows
+    ]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/blood-requests")
+def list_blood_requests(
+    request_status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    user: User = Depends(admin_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    del user
+    if not 1 <= limit <= 100 or offset < 0:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Use a limit from 1 to 100 and a non-negative offset.")
+    allowed_statuses = {"pending", "approved", "rejected", "fulfilled"}
+    if request_status and request_status not in allowed_statuses:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown blood request status.")
+
+    requester = aliased(User)
+    patient_profile = aliased(PatientProfile)
+    patient_user = aliased(User)
+    query = (
+        select(BloodRequest, requester, patient_profile, patient_user)
+        .outerjoin(requester, requester.id == BloodRequest.requested_by_id)
+        .outerjoin(patient_profile, patient_profile.id == BloodRequest.patient_id)
+        .outerjoin(patient_user, patient_user.id == patient_profile.user_id)
+    )
+    count_query = select(func.count(BloodRequest.id))
+    if request_status:
+        query = query.where(BloodRequest.status == request_status)
+        count_query = count_query.where(BloodRequest.status == request_status)
+    total = int(db.scalar(count_query) or 0)
+    rows = db.execute(
+        query.order_by(
+            case(
+                (BloodRequest.status == "pending", 0),
+                (BloodRequest.status == "approved", 1),
+                (BloodRequest.status == "rejected", 2),
+                else_=3,
+            ),
+            case(
+                (BloodRequest.urgency == "emergency", 0),
+                (BloodRequest.urgency == "urgent", 1),
+                else_=2,
+            ),
+            desc(BloodRequest.created_at),
+        ).limit(limit).offset(offset)
+    ).all()
+    items = [
+        BloodRequestItem(
+            id=request.id,
+            patient_id=request.patient_id,
+            patient_name=patient.full_name if patient else None,
+            requested_by_id=request.requested_by_id,
+            requester_email=requester_account.email if requester_account else None,
+            blood_group=request.blood_group,
+            component=request.component,
+            units=request.units,
+            urgency=request.urgency,
+            reason=request.reason,
+            status=request.status,
+            created_at=request.created_at,
+            updated_at=request.updated_at,
+        ).model_dump()
+        for request, requester_account, patient, _patient_account in rows
+    ]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+@router.post("/blood-requests", status_code=status.HTTP_201_CREATED)
+def create_blood_request(
+    payload: BloodRequestCreate,
+    user: User = Depends(admin_user),
+    db: Session = Depends(get_db),
+) -> BloodRequestItem:
+    patient = db.get(PatientProfile, payload.patient_id) if payload.patient_id else None
+    if payload.patient_id and patient is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient was not found.")
+    request = BloodRequest(
+        patient_id=patient.id if patient else None,
+        requested_by_id=user.id,
+        blood_group=payload.blood_group,
+        component=payload.component,
+        units=payload.units,
+        urgency=payload.urgency,
+        reason=payload.reason,
+    )
+    db.add(request)
+    db.flush()
+    _audit(db, user, "blood_request.create", "blood_request", str(request.id))
+    db.commit()
+    db.refresh(request)
+    return BloodRequestItem(
+        id=request.id,
+        patient_id=request.patient_id,
+        patient_name=patient.full_name if patient else None,
+        requested_by_id=request.requested_by_id,
+        requester_email=user.email,
+        blood_group=request.blood_group,
+        component=request.component,
+        units=request.units,
+        urgency=request.urgency,
+        reason=request.reason,
+        status=request.status,
+        created_at=request.created_at,
+        updated_at=request.updated_at,
+    )
+
+
+@router.patch("/blood-requests/{request_id}", response_model=BloodRequestItem)
+def update_blood_request(
+    request_id: UUID,
+    payload: BloodRequestStatusUpdate,
+    user: User = Depends(admin_user),
+    db: Session = Depends(get_db),
+) -> BloodRequestItem:
+    request = db.scalar(select(BloodRequest).where(BloodRequest.id == request_id).with_for_update())
+    if request is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Blood request was not found.")
+    allowed_transitions = {
+        "pending": {"approved", "rejected"},
+        "approved": {"fulfilled"},
+    }
+    if payload.status not in allowed_transitions.get(request.status, set()):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"A {request.status} request cannot be changed to {payload.status}.")
+    if payload.status == "fulfilled":
+        today = datetime.now(ZoneInfo(settings.hospital_timezone)).date()
+        batches = list(
+            db.scalars(
+                select(BloodInventoryItem)
+                .where(
+                    BloodInventoryItem.blood_group == request.blood_group,
+                    BloodInventoryItem.component == request.component,
+                    BloodInventoryItem.status == "available",
+                    BloodInventoryItem.tested.is_(True),
+                    BloodInventoryItem.expires_on >= today,
+                    BloodInventoryItem.units > 0,
+                )
+                .order_by(BloodInventoryItem.expires_on, BloodInventoryItem.id)
+                .with_for_update()
+            ).all()
+        )
+        stock = sum(batch.units for batch in batches)
+        if stock < request.units:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Not enough tested, unexpired stock. {stock} unit(s) available; {request.units} required.",
+            )
+        remaining = request.units
+        for batch in batches:
+            issued = min(batch.units, remaining)
+            if issued == 0:
+                break
+            batch.units -= issued
+            if batch.units == 0:
+                batch.status = "issued"
+            batch.updated_at = datetime.now(timezone.utc)
+            db.add(
+                BloodInventoryTransaction(
+                    inventory_item_id=batch.id,
+                    actor_id=user.id,
+                    action="issued",
+                    units_delta=-issued,
+                    note=f"Fulfilled blood request {str(request.id)[:8]}",
+                )
+            )
+            remaining -= issued
+    request.status = payload.status
+    request.reviewed_by_id = user.id
+    request.reviewed_at = datetime.now(timezone.utc)
+    request.updated_at = request.reviewed_at
+    _audit(db, user, f"blood_request.{payload.status}", "blood_request", str(request.id))
+    if request.requested_by_id:
+        db.add(
+            make_notification(
+                request.requested_by_id,
+                "blood_request",
+                f"Blood request {payload.status}",
+                f"Your request for {request.units} unit(s) of {request.blood_group} {request.component.replace('_', ' ')} was {payload.status}.",
+                "blood_request",
+                str(request.id),
+            )
+        )
+    db.commit()
+    db.refresh(request)
+    patient = db.get(PatientProfile, request.patient_id) if request.patient_id else None
+    requester = db.get(User, request.requested_by_id) if request.requested_by_id else None
+    return BloodRequestItem(
+        id=request.id,
+        patient_id=request.patient_id,
+        patient_name=patient.full_name if patient else None,
+        requested_by_id=request.requested_by_id,
+        requester_email=requester.email if requester else None,
+        blood_group=request.blood_group,
+        component=request.component,
+        units=request.units,
+        urgency=request.urgency,
+        reason=request.reason,
+        status=request.status,
+        created_at=request.created_at,
+        updated_at=request.updated_at,
+    )
+
+
+@router.get("/audit-logs")
+def list_audit_logs(
+    limit: int = 50,
+    offset: int = 0,
+    user: User = Depends(admin_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    del user
+    if not 1 <= limit <= 100 or offset < 0:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Use a limit from 1 to 100 and a non-negative offset.")
+    total = int(db.scalar(select(func.count(AuditLog.id))) or 0)
+    rows = db.execute(
+        select(AuditLog, User)
+        .outerjoin(User, User.id == AuditLog.actor_id)
+        .order_by(desc(AuditLog.created_at))
+        .limit(limit)
+        .offset(offset)
+    ).all()
+    items = [
+        AuditLogItem(
+            id=entry.id,
+            actor_email=actor.email if actor else None,
+            actor_role=actor.role if actor else None,
+            action=entry.action,
+            resource_type=entry.resource_type,
+            resource_id=entry.resource_id,
+            created_at=entry.created_at,
+        ).model_dump()
+        for entry, actor in rows
+    ]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
