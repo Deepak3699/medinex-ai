@@ -22,6 +22,12 @@ export type DoctorRecord = {
   consultation_fee: string | null
 }
 
+export type DepartmentRecord = {
+  id: string
+  name: string
+  location: string | null
+}
+
 export type DoctorSlot = {
   start_at: string
   duration_minutes: number
@@ -50,6 +56,16 @@ export type AppointmentRecord = {
   end_at: string
   status: string
 }
+
+export type DoctorScheduleInput = {
+  weekday: number
+  start_time: string
+  end_time: string
+  slot_minutes: number
+}
+
+export type BedStatus = 'available' | 'reserved' | 'occupied' | 'cleaning' | 'maintenance'
+export type BloodComponent = 'red_cells' | 'platelets' | 'plasma' | 'whole_blood'
 
 export class ApiError extends Error {
   constructor(message: string, readonly status?: number) {
@@ -108,6 +124,10 @@ export function listDoctors(): Promise<DoctorRecord[]> {
   return request<DoctorRecord[]>('/doctors')
 }
 
+export function listDepartments(): Promise<DepartmentRecord[]> {
+  return request<DepartmentRecord[]>('/departments')
+}
+
 export function getDoctorAvailability(doctorId: string, day: string): Promise<{ doctor_id: string; doctor_name: string; date: string; slots: DoctorSlot[] }> {
   const params = new URLSearchParams({ day })
   return request<{ doctor_id: string; doctor_name: string; date: string; slots: DoctorSlot[] }>(`/doctors/${encodeURIComponent(doctorId)}/availability?${params}`)
@@ -130,6 +150,34 @@ export function bookAppointment(input: { doctor_id: string; start_at: string }, 
 
 export function listMyAppointments(token: string): Promise<AppointmentRecord[]> {
   return request<AppointmentRecord[]>('/appointments/mine', {}, token)
+}
+
+export function cancelAppointment(appointmentId: string, token: string): Promise<AppointmentRecord> {
+  return request<AppointmentRecord>(`/appointments/${encodeURIComponent(appointmentId)}/cancel`, { method: 'POST' }, token)
+}
+
+export function createDepartment(input: { name: string; location?: string }, token: string): Promise<DepartmentRecord> {
+  return request<DepartmentRecord>('/admin/departments', { method: 'POST', body: JSON.stringify(input) }, token)
+}
+
+export function createDoctor(input: { email: string; password: string; full_name: string; specialization: string; department_id?: string; consultation_fee?: number }, token: string): Promise<DoctorRecord> {
+  return request<DoctorRecord>('/admin/doctors', { method: 'POST', body: JSON.stringify(input) }, token)
+}
+
+export function createDoctorSchedule(doctorId: string, input: DoctorScheduleInput, token: string): Promise<{ id: string; doctor_id: string; weekday: number; start_time: string; end_time: string; slot_minutes: number }> {
+  return request<{ id: string; doctor_id: string; weekday: number; start_time: string; end_time: string; slot_minutes: number }>(`/admin/doctors/${encodeURIComponent(doctorId)}/schedules`, { method: 'POST', body: JSON.stringify(input) }, token)
+}
+
+export function createWard(input: { name: string; ward_type: string }, token: string): Promise<{ id: string; name: string; ward_type: string }> {
+  return request<{ id: string; name: string; ward_type: string }>('/admin/wards', { method: 'POST', body: JSON.stringify(input) }, token)
+}
+
+export function createBed(wardId: string, input: { bed_number: string; status: BedStatus }, token: string): Promise<{ id: string; ward_id: string; bed_number: string; status: BedStatus }> {
+  return request<{ id: string; ward_id: string; bed_number: string; status: BedStatus }>(`/admin/wards/${encodeURIComponent(wardId)}/beds`, { method: 'POST', body: JSON.stringify(input) }, token)
+}
+
+export function addBloodInventory(input: { blood_group: string; component: BloodComponent; units: number; expires_on: string; tested: boolean }, token: string): Promise<{ id: string; blood_group: string; component: string; units: number; expires_on: string; tested: boolean }> {
+  return request<{ id: string; blood_group: string; component: string; units: number; expires_on: string; tested: boolean }>('/admin/blood-inventory', { method: 'POST', body: JSON.stringify(input) }, token)
 }
 
 export async function registerPatient(input: { name: string; email: string; password: string }): Promise<void> {

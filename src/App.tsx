@@ -1,4 +1,4 @@
-import { useEffect, useState, createContext, useContext, type ButtonHTMLAttributes, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useState, createContext, useContext, type ButtonHTMLAttributes, type FormEvent, type InputHTMLAttributes, type ReactNode } from 'react'
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { motion } from 'motion/react'
 import { z } from 'zod'
@@ -6,15 +6,17 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import type { UseFormRegisterReturn } from 'react-hook-form'
 import {
-  askAssistant, bookAppointment, getDoctorAvailability, listBedAvailability,
-  listBloodAvailability, listDoctors, listMyAppointments, type AppointmentRecord,
-  type BedAvailabilityRecord, type BloodAvailabilityRecord, type DoctorRecord, type DoctorSlot,
-  type UserRole,
+  addBloodInventory, askAssistant, bookAppointment, cancelAppointment, createBed,
+  createDepartment, createDoctor, createDoctorSchedule, createWard, getDoctorAvailability,
+  listBedAvailability, listBloodAvailability, listDepartments, listDoctors,
+  listMyAppointments, type AppointmentRecord, type BedAvailabilityRecord, type BedStatus,
+  type BloodAvailabilityRecord, type BloodComponent, type DepartmentRecord, type DoctorRecord,
+  type DoctorSlot, type UserRole,
 } from './api'
 import { AuthProvider, useAuth } from './auth'
 import {
   Activity, ArrowDownRight, ArrowRight, ArrowUpRight, BadgeCheck, BedDouble, Bell,
-  CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleHelp,
+  BriefcaseMedical, CalendarDays, ChartNoAxesCombined, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleHelp,
   Clock3, Droplets, FileDown, Filter, Heart, HeartPulse, LayoutGrid, LockKeyhole,
   LogOut, Menu, Moon, MoreHorizontal, Search, Send, Settings2, Shield,
   ShieldCheck, Sparkles, Stethoscope, Sun, Users, X, Zap,
@@ -131,29 +133,46 @@ type LoginValues = z.infer<typeof loginSchema>
 type RegisterValues = z.infer<typeof registerSchema>
 
 function pathForRole(role: UserRole): string | null {
-  if (role === 'patient' || role === 'doctor' || role === 'admin') return `/${role}/dashboard`
+  if (role === 'admin' || role === 'patient' || role === 'doctor') return workspacePath(role, 'dashboard')
   return null
+}
+
+function workspacePath(role: PortalRole, page: string) {
+  return `${role === 'admin' ? '/12admin' : `/${role}`}/${page}`
+}
+
+function userInitials(email?: string) {
+  if (!email) return 'MD'
+  const name = email.split('@')[0].replace(/[._-]+/g, ' ').trim()
+  return name.split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '').join('') || 'MD'
 }
 
 function AuthField({ label, registration, error, type, placeholder, autoComplete }: { label: string; registration: UseFormRegisterReturn; error?: string; type: string; placeholder: string; autoComplete: string }) {
   return <label className="form-field"><span>{label}</span><input type={type} autoComplete={autoComplete} placeholder={placeholder} {...registration} />{error && <small className="field-error">{error}</small>}</label>
 }
 
-function AuthPage({ kind }: { kind: 'login' | 'register' | 'forgot' }) {
+function AuthPage({ kind, adminOnly = false }: { kind: 'login' | 'register' | 'forgot'; adminOnly?: boolean }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const { signInUser, registerPatientUser, signOut } = useAuth()
+  const { user, ready, signInUser, registerPatientUser, signOut } = useAuth()
   const navigate = useNavigate()
   const login = useForm<LoginValues>({ resolver: zodResolver(loginSchema) })
   const register = useForm<RegisterValues>({ resolver: zodResolver(registerSchema) })
   const forgot = useForm<{ email: string }>({ resolver: zodResolver(z.object({ email: z.email('Enter a valid email address.') })) })
-  const title = kind === 'login' ? 'Welcome back' : kind === 'register' ? 'Create your account' : 'Reset your password'
-  const subtitle = kind === 'login' ? 'Sign in to your Medinex workspace.' : kind === 'register' ? 'Create a secure patient account.' : 'Enter your email and we’ll help you get back in.'
+  const title = adminOnly && kind === 'login' ? 'Administrator sign in' : kind === 'login' ? 'Welcome back' : kind === 'register' ? 'Create your account' : 'Reset your password'
+  const subtitle = adminOnly && kind === 'login' ? 'Use your hospital administrator account to open operations.' : kind === 'login' ? 'Patients and doctors use this shared sign-in portal.' : kind === 'register' ? 'Create a secure patient account.' : 'Enter your email and we’ll help you get back in.'
+  useEffect(() => {
+    if (ready && user && (adminOnly ? user.role === 'admin' : user.role === 'patient' || user.role === 'doctor')) {
+      const destination = pathForRole(user.role)
+      if (destination) navigate(destination, { replace: true })
+    }
+  }, [ready, user, adminOnly, navigate])
   const finishSignIn = async (user: Awaited<ReturnType<typeof signInUser>>) => {
     const destination = pathForRole(user.role)
-    if (!destination) {
+    const roleAllowed = adminOnly ? user.role === 'admin' : user.role === 'patient' || user.role === 'doctor'
+    if (!destination || !roleAllowed) {
       signOut()
-      throw new Error('This account role is not available in the current workspace. Please contact your hospital administrator.')
+      throw new Error(adminOnly ? 'This sign-in is for hospital administrators. Use the patient and doctor portal for other accounts.' : user.role === 'admin' ? 'Administrators, please sign in through /12admin.' : 'This account role is not available in the current workspace. Please contact your hospital administrator.')
     }
     navigate(destination, { replace: true })
   }
@@ -172,17 +191,17 @@ function AuthPage({ kind }: { kind: 'login' | 'register' | 'forgot' }) {
     finally { setBusy(false) }
   })
   const submitForgot = forgot.handleSubmit(() => setError('Password reset is not configured yet. Please contact your hospital administrator.'))
-  return <main className="auth-layout"><section className="auth-art"><div className="auth-art-glow" /><Brand inverse /><div className="auth-art-copy"><span className="eyebrow">A MORE HUMAN WAY TO MANAGE CARE</span><h1>Care moves<br />better <em>together.</em></h1><p>One thoughtful workspace for the people and details behind every visit.</p></div><div className="auth-art-foot"><ShieldCheck size={16} /> Built around clarity and privacy.</div></section><section className="auth-main"><div className="auth-mobile-brand"><Brand /></div><div className="auth-box"><Link to="/" className="back-link"><ChevronLeft size={15} /> Back to home</Link><div className="eyebrow eyebrow-muted">{kind === 'register' ? 'JOIN MEDINEX' : 'YOUR WORKSPACE'}</div><h2>{title}</h2><p className="auth-subtitle">{subtitle}</p>
-    {kind === 'login' ? <form onSubmit={submitLogin} noValidate><AuthField label="Email address" type="email" placeholder="you@example.com" autoComplete="email" registration={login.register('email')} error={login.formState.errors.email?.message} /><AuthField label="Password" type="password" placeholder="At least 10 characters" autoComplete="current-password" registration={login.register('password')} error={login.formState.errors.password?.message} /><div className="auth-forgot"><Link to="/forgot-password">Forgot password?</Link></div><Button type="submit" className="auth-submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'} {!busy && <ArrowRight size={16} />}</Button></form> : kind === 'register' ? <form onSubmit={submitRegister} noValidate><AuthField label="Full name" type="text" placeholder="Your full name" autoComplete="name" registration={register.register('name')} error={register.formState.errors.name?.message} /><AuthField label="Email address" type="email" placeholder="you@example.com" autoComplete="email" registration={register.register('email')} error={register.formState.errors.email?.message} /><p className="field-hint">Patient accounts can sign up here. Doctors and staff accounts are provisioned by the hospital.</p><AuthField label="Password" type="password" placeholder="At least 10 characters" autoComplete="new-password" registration={register.register('password')} error={register.formState.errors.password?.message} /><Button type="submit" className="auth-submit" disabled={busy}>{busy ? 'Creating account…' : 'Create account'} {!busy && <ArrowRight size={16} />}</Button></form> : <form onSubmit={submitForgot} noValidate><AuthField label="Email address" type="email" placeholder="you@example.com" autoComplete="email" registration={forgot.register('email')} error={forgot.formState.errors.email?.message} /><Button type="submit" className="auth-submit">Continue <ArrowRight size={16} /></Button></form>}
+  return <main className="auth-layout"><section className="auth-art"><div className="auth-art-glow" /><Brand inverse /><div className="auth-art-copy"><span className="eyebrow">A MORE HUMAN WAY TO MANAGE CARE</span><h1>Care moves<br />better <em>together.</em></h1><p>One thoughtful workspace for the people and details behind every visit.</p></div><div className="auth-art-foot"><ShieldCheck size={16} /> Built around clarity and privacy.</div></section><section className="auth-main"><div className="auth-mobile-brand"><Brand /></div><div className="auth-box"><Link to="/" className="back-link"><ChevronLeft size={15} /> Back to home</Link><div className="eyebrow eyebrow-muted">{adminOnly ? 'HOSPITAL OPERATIONS' : kind === 'register' ? 'JOIN MEDINEX' : 'YOUR WORKSPACE'}</div><h2>{title}</h2><p className="auth-subtitle">{subtitle}</p>
+    {kind === 'login' ? <form onSubmit={submitLogin} noValidate><AuthField label="Email address" type="email" placeholder="you@example.com" autoComplete="email" registration={login.register('email')} error={login.formState.errors.email?.message} /><AuthField label="Password" type="password" placeholder="At least 10 characters" autoComplete="current-password" registration={login.register('password')} error={login.formState.errors.password?.message} /><div className="auth-forgot"><Link to={adminOnly ? '/12admin/forgot-password' : '/forgot-password'}>Forgot password?</Link></div><Button type="submit" className="auth-submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'} {!busy && <ArrowRight size={16} />}</Button></form> : kind === 'register' ? <form onSubmit={submitRegister} noValidate><AuthField label="Full name" type="text" placeholder="Your full name" autoComplete="name" registration={register.register('name')} error={register.formState.errors.name?.message} /><AuthField label="Email address" type="email" placeholder="you@example.com" autoComplete="email" registration={register.register('email')} error={register.formState.errors.email?.message} /><p className="field-hint">Patient accounts can sign up here. Doctors and staff accounts are provisioned by the hospital.</p><AuthField label="Password" type="password" placeholder="At least 10 characters" autoComplete="new-password" registration={register.register('password')} error={register.formState.errors.password?.message} /><Button type="submit" className="auth-submit" disabled={busy}>{busy ? 'Creating account…' : 'Create account'} {!busy && <ArrowRight size={16} />}</Button></form> : <form onSubmit={submitForgot} noValidate><AuthField label="Email address" type="email" placeholder="you@example.com" autoComplete="email" registration={forgot.register('email')} error={forgot.formState.errors.email?.message} /><Button type="submit" className="auth-submit">Continue <ArrowRight size={16} /></Button></form>}
     {error && <p className="field-error" role="alert">{error}</p>}
-    <div className="auth-divider"><span>OR PREVIEW THE PRODUCT</span></div><Link to="/demo/patient/dashboard" className="demo-button"><LayoutGrid size={16} /> Explore demo workspace <ArrowRight size={15} /></Link><p className="auth-switch">{kind === 'login' ? <>New to Medinex? <Link to="/register">Create an account</Link></> : <>Already have an account? <Link to="/login">Sign in</Link></>}</p><p className="auth-legal"><ShieldCheck size={13} /> Workspace access follows your hospital account role.</p>
+    {!adminOnly && <><div className="auth-divider"><span>OR PREVIEW THE PRODUCT</span></div><Link to="/demo/patient/dashboard" className="demo-button"><LayoutGrid size={16} /> Explore demo workspace <ArrowRight size={15} /></Link><p className="auth-switch">{kind === 'login' ? <>New to Medinex? <Link to="/register">Create an account</Link></> : <>Already have an account? <Link to="/login">Sign in</Link></>}</p></>}{adminOnly && <p className="auth-switch">Patient or doctor? <Link to="/login">Use the shared sign-in portal</Link></p>}<p className="auth-legal"><ShieldCheck size={13} /> Workspace access follows your hospital account role.</p>
   </div><div className="auth-bottom"><span>© 2026 Medinex</span><Link to="/contact">Need help?</Link></div></section></main>
 }
 
 function DemoBanner() { return <div className="demo-banner"><span className="demo-banner-dot" /> DEMO WORKSPACE <span className="demo-banner-detail">All names, counts and activity shown are synthetic sample data.</span></div> }
 
 function MetricCard({ label, value, delta, icon: Icon, color, trend }: { label: string; value: string; delta: string; icon: LucideIcon; color: string; trend?: 'up' | 'down' }) {
-  return <article className="metric-card"><div className="metric-top"><span>{label}</span><span className={`metric-icon metric-${color}`}><Icon size={17} /></span></div><div className="metric-value">{value}</div><div className="metric-delta">{trend === 'down' ? <ArrowDownRight size={14} /> : <ArrowUpRight size={14} />}<span>{delta}</span></div></article>
+  return <article className="metric-card"><div className="metric-top"><span>{label}</span><span className={`metric-icon metric-${color}`}><Icon size={17} /></span></div><div className="metric-value">{value}</div><div className="metric-delta">{trend === 'down' ? <ArrowDownRight size={14} /> : trend === 'up' ? <ArrowUpRight size={14} /> : <span className="metric-delta-neutral" />}<span>{delta}</span></div></article>
 }
 
 function StatusPill({ status }: { status: string }) {
@@ -208,29 +227,76 @@ function ActivityChart({ includeAdmissions = false }: { includeAdmissions?: bool
   </svg>
 }
 
-function Dashboard({ role, appointments, onBook }: { role: PortalRole; appointments: typeof demoAppointments; onBook: () => void }) {
+function Dashboard({ role, appointments, appointmentRecords = [], doctors = [], onBook, demo = false, loadingAppointments = false, user, routeFor }: { role: PortalRole; appointments: typeof demoAppointments; appointmentRecords?: AppointmentRecord[]; doctors?: DoctorRecord[]; onBook: () => void; demo?: boolean; loadingAppointments?: boolean; user?: ReturnType<typeof useAuth>['user']; routeFor: (page: string) => string }) {
+  const [bedRows, setBedRows] = useState<BedAvailabilityRecord[]>([])
+  const [bloodRows, setBloodRows] = useState<BloodAvailabilityRecord[]>([])
+  const [loadingResources, setLoadingResources] = useState(!demo)
+  const [resourceError, setResourceError] = useState('')
+  useEffect(() => {
+    if (demo) return
+    let active = true
+    setLoadingResources(true)
+    setResourceError('')
+    Promise.all([listBedAvailability(), role === 'admin' ? listBloodAvailability() : Promise.resolve([])])
+      .then(([beds, blood]) => { if (active) { setBedRows(beds); setBloodRows(blood) } })
+      .catch((cause) => { if (active) setResourceError(cause instanceof Error ? cause.message : 'Could not load current hospital resources.') })
+      .finally(() => { if (active) setLoadingResources(false) })
+    return () => { active = false }
+  }, [demo, role])
   const patient = role === 'patient'
   const doctor = role === 'doctor'
-  const greeting = patient ? 'Welcome back, Maya' : doctor ? 'Good morning, Dr. Ananya' : 'Good morning, Alex'
-  const description = patient ? 'Here’s what’s coming up in your care.' : doctor ? 'Here’s a look at your schedule and patient care today.' : 'Here’s a look at what’s happening across your hospital today.'
-  const metrics = patient ? [
+  const accountName = user?.email.split('@')[0].replace(/[._-]+/g, ' ') ?? ''
+  const greeting = demo ? patient ? 'Welcome back, Maya' : doctor ? 'Good morning, Dr. Ananya' : 'Good morning, Alex' : patient ? `Welcome${accountName ? `, ${accountName}` : ''}` : doctor ? 'Your care team overview' : 'Hospital operations overview'
+  const description = patient ? 'Here’s what’s coming up in your care.' : doctor ? 'Your appointments and patient schedule for the day.' : 'A current view of hospital appointments, staffing and capacity.'
+  const currentTime = Date.now()
+  const todayAppointments = appointmentRecords.filter((item) => new Date(item.start_at).toDateString() === new Date().toDateString() && !['cancelled', 'completed'].includes(item.status.toLowerCase()))
+  const upcomingAppointments = appointmentRecords.filter((item) => new Date(item.start_at).getTime() >= currentTime && !['cancelled', 'completed'].includes(item.status.toLowerCase())).sort((a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime())
+  const displayedAppointments = doctor ? todayAppointments.sort((a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime()) : upcomingAppointments
+  const availableBeds = bedRows.reduce((sum, item) => sum + item.available_beds, 0)
+  const totalBeds = bedRows.reduce((sum, item) => sum + item.total_beds, 0)
+  const occupiedBeds = bedRows.reduce((sum, item) => sum + item.occupied_beds, 0)
+  const bloodUnits = bloodRows.reduce((sum, item) => sum + item.units_available, 0)
+  const demoPatientMetrics = [
     { label: 'Upcoming visits', value: '2', delta: 'Next: today at 3:30 PM', icon: CalendarDays, color: 'blue' },
     { label: 'Care team', value: '4', delta: 'Across 3 specialties', icon: Stethoscope, color: 'purple' },
     { label: 'Notifications', value: '3', delta: '1 new reminder', icon: Bell, color: 'orange' },
     { label: 'Health records', value: '8', delta: 'Updated this month', icon: Heart, color: 'green' },
-  ] : doctor ? [
+  ]
+  const demoDoctorMetrics = [
     { label: 'Today’s visits', value: '12', delta: '4 remaining', icon: CalendarDays, color: 'blue' },
     { label: 'Patients seen', value: '08', delta: '+2 from yesterday', icon: Users, color: 'purple' },
     { label: 'Clinic hours', value: '6.5h', delta: 'Ends at 4:30 PM', icon: Clock3, color: 'green' },
     { label: 'Follow-ups', value: '03', delta: 'Need attention', icon: Activity, color: 'orange' },
-  ] : demoMetrics
-  const visits = patient ? appointments.slice(0, 2) : doctor ? appointments.slice(0, 4) : appointments.slice(0, 5)
+  ]
+  const liveMetrics = patient ? [
+    { label: 'Upcoming visits', value: loadingAppointments ? '…' : String(upcomingAppointments.length), delta: upcomingAppointments[0] ? `Next: ${formatSlotTime(upcomingAppointments[0].start_at)}` : 'No upcoming appointments', icon: CalendarDays, color: 'blue' },
+    { label: 'Doctors listed', value: String(doctors.length), delta: 'Current directory', icon: Stethoscope, color: 'purple' },
+    { label: 'Notifications', value: '—', delta: 'Feed not connected', icon: Bell, color: 'orange' },
+    { label: 'Health records', value: '—', delta: 'Records service not connected', icon: Heart, color: 'green' },
+  ] : doctor ? [
+    { label: 'Today’s visits', value: loadingAppointments ? '…' : String(todayAppointments.length), delta: 'From your appointment list', icon: CalendarDays, color: 'blue' },
+    { label: 'Linked patients', value: String(new Set(appointmentRecords.map((item) => item.patient_id)).size), delta: 'Identified by account ID', icon: Users, color: 'purple' },
+    { label: 'Clinic hours', value: '—', delta: 'Schedule details not exposed', icon: Clock3, color: 'green' },
+    { label: 'Follow-ups', value: '—', delta: 'Care notes not connected', icon: Activity, color: 'orange' },
+  ] : [
+    { label: 'Appointments today', value: loadingAppointments ? '…' : String(todayAppointments.length), delta: 'Current hospital records', icon: CalendarDays, color: 'blue' },
+    { label: 'Active doctors', value: String(doctors.length), delta: 'Current directory', icon: Stethoscope, color: 'purple' },
+    { label: 'Beds available', value: loadingResources ? '…' : String(availableBeds), delta: `of ${totalBeds} registered beds`, icon: BedDouble, color: 'green' },
+    { label: 'Tested blood stock', value: loadingResources ? '…' : String(bloodUnits), delta: 'Available unexpired units', icon: Droplets, color: 'orange' },
+  ]
+  const metrics = demo ? patient ? demoPatientMetrics : doctor ? demoDoctorMetrics : demoMetrics : liveMetrics
+  const visitSource = demo ? appointments : displayedAppointments.flatMap((record) => {
+    const row = appointments.find((item) => `APT-${record.id.slice(0, 8).toUpperCase()}` === item.code)
+    return row ? [row] : []
+  })
+  const visits = (patient ? visitSource.slice(0, 2) : doctor ? visitSource.slice(0, 4) : visitSource.slice(0, 5))
+  const occupancy = totalBeds ? Math.round(occupiedBeds / totalBeds * 100) : 0
   return <>
-    <div className="page-heading"><div><div className="eyebrow eyebrow-muted">{new Intl.DateTimeFormat('en', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())}</div><h1>{greeting}</h1><p>{description}</p></div><Button onClick={onBook}><CalendarDays size={16} /> {patient ? 'Book an appointment' : doctor ? 'View schedule' : 'New appointment'} <ArrowRight size={15} /></Button></div>
+    <div className="page-heading"><div><div className="eyebrow eyebrow-muted">{new Intl.DateTimeFormat('en', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())}</div><h1>{greeting}</h1><p>{description}</p></div><Button onClick={onBook}><CalendarDays size={16} /> {patient ? 'Book an appointment' : doctor ? 'View schedule' : 'Appointments'} <ArrowRight size={15} /></Button></div>
     <div className="metrics-grid">{metrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}</div>
-    <div className="dashboard-main-grid"><section className="panel chart-panel"><SectionTitle title={patient ? 'Your care activity' : doctor ? 'Appointments this week' : 'Appointments this week'} action={<button className="select-ghost">This week <ChevronDown size={14} /></button>} /><div className="chart-legend"><span><i /> Appointments</span><span><i className="legend-soft" /> Admissions</span></div><div className="chart-area"><ActivityChart includeAdmissions /></div></section>
-      <section className="panel capacity-panel"><SectionTitle title={patient ? 'Care at a glance' : 'Capacity at a glance'} action={<Link className="icon-link" to={role === 'patient' ? '/patient/bed-availability' : '/admin/wards'}><ArrowRight size={15} /></Link>} /><div className="capacity-total"><strong>74<span>%</span></strong><span>aggregate occupancy</span></div><div className="capacity-ring-wrap"><div className="capacity-ring"><div><strong>34</strong><span>available</span></div></div></div><div className="capacity-legend"><span><i className="cap-used" /> Occupied <b>90</b></span><span><i className="cap-free" /> Available <b>34</b></span></div><div className="capacity-caption"><span><LockKeyhole size={12} /> Aggregate demo count</span></div></section></div>
-    <div className="dashboard-bottom-grid"><section className="panel appointments-panel"><SectionTitle title={patient ? 'Upcoming appointments' : doctor ? 'Today’s appointments' : 'Recent appointments'} action={<Link className="text-link small-link" to={`/${role}/appointments`}>View all <ArrowRight size={14} /></Link>} /><AppointmentTable appointments={visits} role={role} compact /></section><section className="panel activity-panel"><SectionTitle title={patient ? 'Your care team' : doctor ? 'Care notes' : 'Operational updates'} action={<button className="icon-link" aria-label="More activity"><MoreHorizontal size={17} /></button>} /><ActivityList role={role} /></section></div>
+    <div className="dashboard-main-grid"><section className="panel chart-panel"><SectionTitle title={demo ? patient ? 'Your care activity' : 'Appointments this week' : 'Live operations'} /><div className="chart-legend">{demo ? <><span><i /> Appointments</span><span><i className="legend-soft" /> Admissions</span></> : <span><i /> Current connected data</span>}</div><div className="chart-area">{demo ? <ActivityChart includeAdmissions /> : <div className="chart-empty"><Sparkles size={19} /><strong>Live records are ready</strong><span>Historical charts need a reporting endpoint. Current appointments, doctors and availability are shown in this workspace.</span></div>}</div></section>
+      <section className="panel capacity-panel"><SectionTitle title={patient ? 'Care at a glance' : 'Capacity at a glance'} action={<Link className="icon-link" to={routeFor(patient ? 'bed-availability' : 'wards')}><ArrowRight size={15} /></Link>} /><div className="capacity-total"><strong>{demo ? '74' : loadingResources ? '…' : totalBeds ? occupancy : '—'}{(demo || !loadingResources && totalBeds > 0) && <span>%</span>}</strong><span>aggregate occupancy</span></div><div className="capacity-ring-wrap"><div className="capacity-ring" style={!demo && !loadingResources ? { background: `conic-gradient(#58a095 0 ${occupancy}%, #e7efed ${occupancy}% 100%)` } : undefined}><div><strong>{demo ? '34' : loadingResources ? '…' : availableBeds}</strong><span>available</span></div></div></div><div className="capacity-legend"><span><i className="cap-used" /> Occupied <b>{demo ? '90' : loadingResources ? '…' : occupiedBeds}</b></span><span><i className="cap-free" /> Available <b>{demo ? '34' : loadingResources ? '…' : availableBeds}</b></span></div><div className="capacity-caption"><span><LockKeyhole size={12} /> {demo ? 'Aggregate sample count' : resourceError ? 'Hospital resources unavailable' : 'Aggregate hospital inventory'}</span></div></section></div>
+    <div className="dashboard-bottom-grid"><section className="panel appointments-panel"><SectionTitle title={patient ? 'Upcoming appointments' : doctor ? 'Today’s appointments' : 'Recent appointments'} action={<Link className="text-link small-link" to={routeFor('appointments')}>View all <ArrowRight size={14} /></Link>} />{loadingAppointments && !demo ? <EmptyState icon={CalendarDays} title="Loading appointments" body="Fetching appointments connected to your account." /> : <AppointmentTable appointments={visits} role={role} compact />}</section><section className="panel activity-panel"><SectionTitle title={demo ? patient ? 'Your care team' : doctor ? 'Care notes' : 'Operational updates' : 'Workspace updates'} />{demo ? <ActivityList role={role} /> : <EmptyState icon={Bell} title="Activity feed not connected" body="Your live appointments and hospital resources are available in their dedicated pages." />}</section></div>
   </>
 }
 
@@ -295,7 +361,7 @@ function displayAppointment(record: AppointmentRecord, doctors: DoctorRecord[]) 
   }
 }
 
-function BookModal({ open, doctor, doctors, demo, onClose, onBook }: { open: boolean; doctor?: string; doctors: DoctorRecord[]; demo: boolean; onClose: () => void; onBook: (appointment: typeof demoAppointments[number]) => void }) {
+function BookModal({ open, doctor, doctors, demo, onClose, onBook }: { open: boolean; doctor?: string; doctors: DoctorRecord[]; demo: boolean; onClose: () => void; onBook: (appointment: typeof demoAppointments[number], record?: AppointmentRecord) => void }) {
   const [selectedDoctor, setSelectedDoctor] = useState(doctor ?? (demo ? demoDoctors[0].name : doctors[0]?.id ?? ''))
   const [selectedTime, setSelectedTime] = useState(demo ? '3:30 PM' : '')
   const [date, setDate] = useState(localDateValue())
@@ -357,7 +423,7 @@ function BookModal({ open, doctor, doctors, demo, onClose, onBook }: { open: boo
     setSubmitting(true)
     try {
       const appointment = await bookAppointment({ doctor_id: selectedDoctor, start_at: selectedTime }, token)
-      onBook({ patient: 'You', doctor: doctorName, specialty: doctorSpecialty, date: `${new Date(appointment.start_at).toLocaleDateString('en', { month: 'short', day: 'numeric' })}, ${formatSlotTime(appointment.start_at)}`, status: appointment.status, code: `APT-${appointment.id.slice(0, 8).toUpperCase()}` })
+      onBook({ patient: 'You', doctor: doctorName, specialty: doctorSpecialty, date: `${new Date(appointment.start_at).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}, ${formatSlotTime(appointment.start_at)}`, status: appointment.status, code: `APT-${appointment.id.slice(0, 8).toUpperCase()}` }, appointment)
       setDone(true)
       notify('Your appointment is confirmed.')
     } catch (cause) {
@@ -375,24 +441,25 @@ function BloodAvailability({ admin = false, demo = false }: { admin?: boolean; d
   const [inventory, setInventory] = useState<BloodAvailabilityRecord[]>([])
   const [loading, setLoading] = useState(!demo)
   const [error, setError] = useState('')
-  const [requested, setRequested] = useState('')
+  const [refresh, setRefresh] = useState(0)
+  const [createOpen, setCreateOpen] = useState(false)
   const notify = useToast()
-
   useEffect(() => {
     if (demo) return
     let active = true
     setLoading(true)
+    setError('')
     listBloodAvailability()
       .then((rows) => { if (active) setInventory(rows) })
       .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'Could not load blood availability.') })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [demo])
+  }, [demo, refresh])
 
   const groups = demo
     ? demoBlood.filter((item) => filter === 'All groups' || (filter === 'Low stock' ? item.status === 'Low stock' : item.status === 'Available'))
     : Object.values(inventory.reduce<Record<string, { group: string; units: number; status: string; tone: string }>>((all, item) => {
-      const key = `${item.blood_group} · ${item.component}`
+      const key = `${item.blood_group} · ${item.component.replaceAll('_', ' ')}`
       const existing = all[key] ?? { group: key, units: 0, status: 'Available', tone: 'green' }
       existing.units += item.units_available
       all[key] = existing
@@ -400,31 +467,170 @@ function BloodAvailability({ admin = false, demo = false }: { admin?: boolean; d
     }, {}))
   const totalUnits = groups.reduce((sum, item) => sum + item.units, 0)
   const groupCount = demo ? groups.length : new Set(inventory.map((item) => item.blood_group)).size
-  return <><div className="inventory-summary"><div className="inventory-highlight"><div className="inventory-highlight-icon"><Droplets size={20} /></div><div><span>{demo ? 'Total sample inventory' : 'Available inventory'}</span><strong>{totalUnits} <small>units</small></strong><p>{demo ? 'Illustrative counts across 8 blood groups' : `${groupCount} blood groups in hospital stock`}</p></div></div><div className="inventory-mini"><span>{demo ? 'Low stock groups' : 'Blood groups listed'}</span><strong>{demo ? <>3 <small>of 8</small></> : groupCount}</strong>{demo ? <StatusPill status="Attention" /> : <span className="inventory-footnote">Tested, unexpired stock only</span>}</div><div className="inventory-mini"><span>Open requests</span><strong>{demo && admin ? '7' : '—'}</strong><span className="inventory-footnote">{demo ? admin ? 'Sample operational count' : 'Ask hospital staff' : 'Request workflow not connected'}</span></div></div><div className="panel inventory-panel"><div className="panel-toolbar"><SectionTitle title="Inventory by blood group" action={<label className="sort-select"><Filter size={14} /><select value={filter} onChange={(event) => setFilter(event.target.value)}><option>All groups</option>{demo && <><option>Available</option><option>Low stock</option></>}</select><ChevronDown size={13} /></label>} /></div>{error && <p className="field-error" role="alert">{error}</p>}{loading ? <EmptyState icon={Droplets} title="Loading blood availability" body="Fetching the current hospital inventory." /> : groups.length ? <div className="blood-grid">{groups.map((item) => <article className={`blood-card ${item.tone === 'red' ? 'blood-low' : ''}`} key={item.group}><span className="blood-icon"><Droplets size={17} /></span><strong>{item.group}</strong><span className="blood-units"><b>{item.units}</b> {demo ? 'demo units' : 'units available'}</span><div className="blood-card-foot"><StatusPill status={item.status} />{demo && admin && <button className="table-action" onClick={() => { setRequested(item.group); notify(`Preview only: ${item.group} selected for follow-up.`) }}>Review</button>}</div></article>)}</div> : <EmptyState icon={Droplets} title="No inventory listed" body="The hospital has no available, tested stock in this category right now." />}<div className="inventory-disclaimer"><ShieldCheck size={15} /><span>{demo ? 'Sample inventory only. This is not verified live stock or clinical compatibility guidance.' : 'Counts are separated by blood group and component, and include only available, tested, unexpired inventory. Qualified hospital personnel must confirm any release decision.'}</span></div></div>{requested && <span className="sr-only" aria-live="polite">{requested} selected for review</span>}</>
+  return <>
+    {admin && !demo && <div className="inventory-admin-actions"><Button onClick={() => setCreateOpen(true)}>Receive blood stock <Droplets size={15} /></Button></div>}
+    <div className="inventory-summary">
+      <div className="inventory-highlight"><div className="inventory-highlight-icon"><Droplets size={20} /></div><div><span>{demo ? 'Total sample inventory' : 'Available inventory'}</span><strong>{loading ? '…' : totalUnits} <small>units</small></strong><p>{demo ? 'Illustrative counts across 8 blood groups' : `${groupCount} blood groups in hospital stock`}</p></div></div>
+      <div className="inventory-mini"><span>{demo ? 'Low stock groups' : 'Blood groups listed'}</span><strong>{demo ? <>3 <small>of 8</small></> : loading ? '…' : groupCount}</strong>{demo ? <StatusPill status="Attention" /> : <span className="inventory-footnote">Tested, unexpired stock only</span>}</div>
+      <div className="inventory-mini"><span>Blood requests</span><strong>—</strong><span className="inventory-footnote">Request tracking service not connected</span></div>
+    </div>
+    <div className="panel inventory-panel">
+      <div className="panel-toolbar"><SectionTitle title="Inventory by blood group and component" action={<label className="sort-select"><Filter size={14} /><select value={filter} onChange={(event) => setFilter(event.target.value)}><option>All groups</option>{demo && <><option>Available</option><option>Low stock</option></>}</select><ChevronDown size={13} /></label>} /></div>
+      {error && <p className="field-error" role="alert">{error}</p>}
+      {loading ? <EmptyState icon={Droplets} title="Loading blood availability" body="Fetching the current hospital inventory." /> : groups.length ? <div className="blood-grid">{groups.map((item) => <article className={`blood-card ${item.tone === 'red' ? 'blood-low' : ''}`} key={item.group}><span className="blood-icon"><Droplets size={17} /></span><strong>{item.group}</strong><span className="blood-units"><b>{item.units}</b> {demo ? 'demo units' : 'units available'}</span><div className="blood-card-foot"><StatusPill status={item.status} />{demo && admin && <button className="table-action" onClick={() => notify(`Preview only: ${item.group} selected for follow-up.`)}>Review</button>}</div></article>)}</div> : <EmptyState icon={Droplets} title="No inventory listed" body="The hospital has no available, tested stock in this category right now." />}
+      <div className="inventory-disclaimer"><ShieldCheck size={15} /><span>{demo ? 'Sample inventory only. This is not verified live stock or clinical compatibility guidance.' : 'Counts include available, tested and unexpired stock. Qualified hospital personnel must confirm any release decision.'}</span></div>
+    </div>
+    {admin && !demo && createOpen && <AdminCreateModal kind="blood" onClose={() => setCreateOpen(false)} onSaved={() => { setRefresh((value) => value + 1); notify('Blood stock batch received.') }} />}
+  </>
 }
 
 function BedAvailability({ admin = false, demo = false }: { admin?: boolean; demo?: boolean }) {
   const [liveWards, setLiveWards] = useState<BedAvailabilityRecord[]>([])
   const [loading, setLoading] = useState(!demo)
   const [error, setError] = useState('')
+  const [refresh, setRefresh] = useState(0)
+  const [createKind, setCreateKind] = useState<'ward' | 'bed' | null>(null)
+  const [selectedWard, setSelectedWard] = useState<string>()
+  const notify = useToast()
   useEffect(() => {
     if (demo) return
     let active = true
     setLoading(true)
+    setError('')
     listBedAvailability()
       .then((rows) => { if (active) setLiveWards(rows) })
       .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'Could not load bed availability.') })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [demo])
+  }, [demo, refresh])
 
   const wards = demo
-    ? demoWards.map((ward) => ({ ward: ward.name, ward_type: ward.type, total_beds: ward.total, available_beds: ward.available, occupied_beds: ward.total - ward.available, color: ward.color }))
-    : liveWards.map((ward, index) => ({ ward: ward.ward, ward_type: ward.ward_type, total_beds: ward.total_beds, available_beds: ward.available_beds, occupied_beds: ward.occupied_beds, color: ['teal', 'violet', 'pink', 'amber'][index % 4] }))
+    ? demoWards.map((ward) => ({ ward_id: '', ward: ward.name, ward_type: ward.type, total_beds: ward.total, available_beds: ward.available, occupied_beds: ward.total - ward.available, color: ward.color }))
+    : liveWards.map((ward, index) => ({ ...ward, color: ['teal', 'violet', 'pink', 'amber'][index % 4] }))
   const total = wards.reduce((sum, ward) => sum + ward.total_beds, 0)
   const available = wards.reduce((sum, ward) => sum + ward.available_beds, 0)
   const occupancy = total ? Math.round((total - available) / total * 100) : 0
-  return <><div className="inventory-summary bed-summary"><div className="inventory-highlight"><div className="inventory-highlight-icon bed-highlight"><BedDouble size={20} /></div><div><span>Available across wards</span><strong>{available} <small>of {total}{demo ? ' demo' : ''} beds</small></strong><p>{demo ? 'Aggregate, illustrative availability' : 'Aggregate count from hospital inventory'}</p></div></div><div className="inventory-mini"><span>Occupancy</span><strong>{occupancy}<small>%</small></strong><div className="mini-progress"><i style={{ width: `${occupancy}%` }} /></div></div><div className="inventory-mini"><span>Last updated</span><strong>{demo ? '—' : loading ? '…' : 'Live'}</strong><span className="inventory-footnote">{demo ? admin ? 'Staff view · sample operations' : 'No live feed connected' : 'Hospital inventory service'}</span></div></div>{error && <p className="field-error" role="alert">{error}</p>}{loading ? <EmptyState icon={BedDouble} title="Loading bed availability" body="Fetching aggregate ward counts." /> : wards.length ? <div className="ward-grid">{wards.map((ward) => <article className="ward-card" key={ward.ward}><div className={`ward-illustration ward-${ward.color}`}><BedDouble size={24} /><span>{ward.ward_type}</span></div><div className="ward-title"><div><h3>{ward.ward}</h3><span>{ward.total_beds} total beds{demo ? ' · Demo' : ''}</span></div><button className="icon-link" aria-label={`More about ${ward.ward}`}><MoreHorizontal size={18} /></button></div><div className="ward-progress"><span style={{ width: `${ward.total_beds ? ward.occupied_beds / ward.total_beds * 100 : 0}%` }} /></div><div className="ward-bottom"><span><i /> {ward.available_beds} available</span><span>{ward.occupied_beds} occupied</span></div></article>)}</div> : <EmptyState icon={BedDouble} title="No ward inventory listed" body="The hospital has no ward bed counts available right now." />}<div className="inventory-disclaimer bed-disclaimer"><ShieldCheck size={15} /><span>{demo ? 'Aggregate sample counts are not a guarantee of admission or clinical suitability.' : 'Aggregate live counts are not a guarantee of admission or clinical suitability.'} Contact hospital staff to confirm current availability.</span></div></>
+  return <>
+    {admin && !demo && <div className="inventory-admin-actions"><Button onClick={() => setCreateKind('ward')}>Add ward <BedDouble size={15} /></Button></div>}
+    <div className="inventory-summary bed-summary"><div className="inventory-highlight"><div className="inventory-highlight-icon bed-highlight"><BedDouble size={20} /></div><div><span>Available across wards</span><strong>{loading ? '…' : available} <small>of {loading ? '…' : total}{demo ? ' demo' : ''} beds</small></strong><p>{demo ? 'Aggregate, illustrative availability' : 'Aggregate count from hospital inventory'}</p></div></div><div className="inventory-mini"><span>Occupancy</span><strong>{loading ? '…' : occupancy}<small>{loading ? '' : '%'}</small></strong><div className="mini-progress"><i style={{ width: `${loading ? 0 : occupancy}%` }} /></div></div><div className="inventory-mini"><span>Last updated</span><strong>{demo ? '—' : loading ? '…' : 'Live'}</strong><span className="inventory-footnote">{demo ? admin ? 'Staff view · sample operations' : 'No live feed connected' : 'Hospital inventory service'}</span></div></div>
+    {error && <p className="field-error" role="alert">{error}</p>}
+    {loading ? <EmptyState icon={BedDouble} title="Loading bed availability" body="Fetching aggregate ward counts." /> : wards.length ? <div className="ward-grid">{wards.map((ward) => <article className="ward-card" key={ward.ward}><div className={`ward-illustration ward-${ward.color}`}><BedDouble size={24} /><span>{ward.ward_type}</span></div><div className="ward-title"><div><h3>{ward.ward}</h3><span>{ward.total_beds} total beds{demo ? ' · Demo' : ''}</span></div>{admin && !demo ? <button className="table-action" onClick={() => { setSelectedWard(ward.ward_id); setCreateKind('bed') }}>+ Add bed</button> : <button className="icon-link" aria-label={`More about ${ward.ward}`}><MoreHorizontal size={18} /></button>}</div><div className="ward-progress"><span style={{ width: `${ward.total_beds ? ward.occupied_beds / ward.total_beds * 100 : 0}%` }} /></div><div className="ward-bottom"><span><i /> {ward.available_beds} available</span><span>{ward.occupied_beds} occupied</span></div></article>)}</div> : <EmptyState icon={BedDouble} title="No ward inventory listed" body="The hospital has no ward bed counts available right now." />}
+    <div className="inventory-disclaimer bed-disclaimer"><ShieldCheck size={15} /><span>{demo ? 'Aggregate sample counts are not a guarantee of admission or clinical suitability.' : 'Aggregate live counts are not a guarantee of admission or clinical suitability.'} Contact hospital staff to confirm current availability.</span></div>
+    {admin && !demo && createKind && <AdminCreateModal kind={createKind} wardId={selectedWard} wards={liveWards} onClose={() => setCreateKind(null)} onSaved={() => { setRefresh((value) => value + 1); notify(createKind === 'ward' ? 'Ward created.' : 'Bed added.') }} />}
+  </>
+}
+
+type AdminCreateKind = 'doctor' | 'department' | 'schedule' | 'ward' | 'bed' | 'blood'
+
+function AdminCreateModal({ kind, doctorId, wardId, departments = [], wards = [], onClose, onSaved }: { kind: AdminCreateKind; doctorId?: string; wardId?: string; departments?: DepartmentRecord[]; wards?: BedAvailabilityRecord[]; onClose: () => void; onSaved: () => void }) {
+  const { token } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const title: Record<AdminCreateKind, string> = { doctor: 'Add a doctor', department: 'Add a department', schedule: 'Add a clinic schedule', ward: 'Add a ward', bed: 'Add a bed', blood: 'Receive blood stock' }
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!token) { setError('Your session expired. Sign in again to continue.'); return }
+    const values = new FormData(event.currentTarget)
+    const value = (name: string) => String(values.get(name) ?? '').trim()
+    setBusy(true)
+    setError('')
+    try {
+      if (kind === 'doctor') {
+        await createDoctor({ email: value('email'), password: value('password'), full_name: value('full_name'), specialization: value('specialization'), ...(value('department_id') ? { department_id: value('department_id') } : {}), ...(value('consultation_fee') ? { consultation_fee: Number(value('consultation_fee')) } : {}) }, token)
+      } else if (kind === 'department') {
+        await createDepartment({ name: value('name'), ...(value('location') ? { location: value('location') } : {}) }, token)
+      } else if (kind === 'schedule') {
+        if (!doctorId) throw new Error('Choose a doctor before adding a schedule.')
+        await createDoctorSchedule(doctorId, { weekday: Number(value('weekday')), start_time: value('start_time'), end_time: value('end_time'), slot_minutes: Number(value('slot_minutes')) }, token)
+      } else if (kind === 'ward') {
+        await createWard({ name: value('name'), ward_type: value('ward_type') }, token)
+      } else if (kind === 'bed') {
+        await createBed(value('ward_id'), { bed_number: value('bed_number'), status: value('status') as BedStatus }, token)
+      } else {
+        await addBloodInventory({ blood_group: value('blood_group'), component: value('component') as BloodComponent, units: Number(value('units')), expires_on: value('expires_on'), tested: values.get('tested') === 'on' }, token)
+      }
+      onSaved()
+      onClose()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not save this record.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const field = (label: string, name: string, type = 'text', props: InputHTMLAttributes<HTMLInputElement> = {}) => <label className="form-field" key={name}><span>{label}</span><input name={name} type={type} {...props} required={props.required ?? true} /></label>
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section role="dialog" aria-modal="true" aria-labelledby="admin-create-title" className="booking-modal admin-create-modal"><div className="modal-top"><div><span className="eyebrow eyebrow-muted">HOSPITAL OPERATIONS</span><h2 id="admin-create-title">{title[kind]}</h2></div><button className="icon-button" aria-label="Close dialog" onClick={onClose}><X size={19} /></button></div><form className="booking-form" onSubmit={submit}>
+    {kind === 'doctor' && <>{field('Full name', 'full_name')}{field('Work email', 'email', 'email')}{field('Temporary password', 'password', 'password', { minLength: 10, autoComplete: 'new-password' })}{field('Specialty', 'specialization')}{departments.length > 0 && <label className="form-field"><span>Department</span><select name="department_id" defaultValue=""><option value="">No department</option>{departments.map((department) => <option key={department.id} value={department.id}>{department.name}</option>)}</select></label>}{field('Consultation fee (optional)', 'consultation_fee', 'number', { min: 0, step: '0.01', required: false })}<p className="field-hint">A doctor login is created with this account. Add a schedule from the doctor list after saving.</p></>}
+    {kind === 'department' && <>{field('Department name', 'name')}{field('Location (optional)', 'location', 'text', { required: false })}</>}
+    {kind === 'schedule' && <><label className="form-field"><span>Clinic day</span><select name="weekday" defaultValue="0">{['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day, index) => <option key={day} value={index}>{day}</option>)}</select></label>{field('Starts at', 'start_time', 'time')}{field('Ends at', 'end_time', 'time')}<label className="form-field"><span>Appointment length</span><select name="slot_minutes" defaultValue="30">{[15, 20, 30, 45, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}</select></label><p className="field-hint">Uses Monday = 0 through Sunday = 6, as required by the hospital schedule.</p></>}
+    {kind === 'ward' && <>{field('Ward name', 'name')}<label className="form-field"><span>Care type</span><select name="ward_type" defaultValue="general"><option value="general">General</option><option value="icu">ICU</option><option value="maternity">Maternity</option><option value="pediatrics">Pediatrics</option><option value="emergency">Emergency</option><option value="surgical">Surgical</option></select></label></>}
+    {kind === 'bed' && <><label className="form-field"><span>Ward</span><select name="ward_id" defaultValue={wardId ?? wards[0]?.ward_id ?? ''} required>{wards.map((ward) => <option key={ward.ward_id} value={ward.ward_id}>{ward.ward}</option>)}</select></label>{field('Bed number', 'bed_number')}<label className="form-field"><span>Initial status</span><select name="status" defaultValue="available">{(['available', 'reserved', 'occupied', 'cleaning', 'maintenance'] as const).map((status) => <option key={status} value={status}>{status[0].toUpperCase() + status.slice(1)}</option>)}</select></label>{wards.length === 0 && <p className="field-hint">Create a ward before adding a bed.</p>}</>}
+    {kind === 'blood' && <><label className="form-field"><span>Blood group</span><select name="blood_group" defaultValue="O+">{['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].map((group) => <option key={group}>{group}</option>)}</select></label><label className="form-field"><span>Component</span><select name="component" defaultValue="red_cells">{[['red_cells', 'Red cells'], ['platelets', 'Platelets'], ['plasma', 'Plasma'], ['whole_blood', 'Whole blood']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>{field('Units received', 'units', 'number', { min: 1, max: 10000 })}{field('Expiry date', 'expires_on', 'date', { min: localDateValue() })}<label className="checkbox-field"><input type="checkbox" name="tested" defaultChecked /> <span>Screening completed and tested</span></label><p className="field-hint">Only tested, unexpired stock appears in availability results.</p></>}
+    {error && <p className="field-error" role="alert">{error}</p>}<Button type="submit" className="full-width" disabled={busy || (kind === 'bed' && wards.length === 0)}>{busy ? 'Saving…' : 'Save record'} <ArrowRight size={15} /></Button></form></section></div>
+}
+
+function AdminDoctorsPage({ search, staff = false }: { search: string; staff?: boolean }) {
+  const notify = useToast()
+  const [doctors, setDoctors] = useState<DoctorRecord[]>([])
+  const [departments, setDepartments] = useState<DepartmentRecord[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [refresh, setRefresh] = useState(0)
+  const [modal, setModal] = useState<{ kind: 'doctor' | 'schedule'; doctorId?: string } | null>(null)
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    setError('')
+    Promise.all([listDoctors(), listDepartments()])
+      .then(([doctorRows, departmentRows]) => { if (active) { setDoctors(doctorRows); setDepartments(departmentRows) } })
+      .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'Could not load the hospital directory.') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [refresh])
+  const rows = doctors.filter((doctor) => `${doctor.full_name} ${doctor.specialization}`.toLowerCase().includes(search.toLowerCase()))
+  const title = staff ? 'Doctor staff accounts' : 'Doctors'
+  const description = staff ? 'Doctor accounts currently supported by the staff service. Other staff roles need a backend endpoint.' : 'Manage the clinical directory and each doctor’s weekly clinic schedule.'
+  return <>
+    <div className="list-page-intro"><div><h1>{title}</h1><p>{description}</p></div><Button onClick={() => setModal({ kind: 'doctor' })}>Add doctor <Users size={15} /></Button></div>
+    {error && <p className="field-error" role="alert">{error}</p>}
+    {staff && <div className="inventory-disclaimer"><ShieldCheck size={15} /><span>This directory includes doctors only. Nurse, receptionist and other staff accounts are not supported by the current API.</span></div>}
+    <section className="panel list-panel admin-directory-panel"><div className="list-toolbar"><div className="list-toolbar-info"><strong>{loading ? '…' : rows.length}</strong><span>· {loading ? 'Loading hospital directory' : 'Active doctor accounts'}</span></div><button className="export-button" onClick={() => setRefresh((value) => value + 1)}><Activity size={14} /> Refresh</button></div>
+      {loading ? <EmptyState icon={Stethoscope} title="Loading doctors" body="Fetching the current hospital directory." /> : rows.length ? <div className="table-scroll"><table className="data-table"><thead><tr><th>Doctor</th><th>Specialty</th><th>Department</th><th>Consultation fee</th><th>Profile ID</th><th>Schedule</th></tr></thead><tbody>{rows.map((doctor) => { const department = departments.find((item) => item.id === doctor.department_id); return <tr key={doctor.id}><td><div className="person-cell"><span className="table-avatar">{userInitials(doctor.full_name.replace(/^Dr\.\s*/i, '').replaceAll(' ', '.') + '@medinex')}</span><span><strong>{doctor.full_name}</strong><small>Active directory listing</small></span></div></td><td>{doctor.specialization}</td><td>{department?.name ?? 'Not assigned'}</td><td>{doctor.consultation_fee ? `₹${Number(doctor.consultation_fee).toLocaleString('en-IN')}` : 'Not set'}</td><td className="table-code">DOC-{doctor.id.slice(0, 8).toUpperCase()}</td><td><button className="table-action" onClick={() => setModal({ kind: 'schedule', doctorId: doctor.id })}>Add schedule</button></td></tr> })}</tbody></table></div> : <EmptyState icon={Stethoscope} title={search ? 'No matching doctors' : 'No doctors in the directory'} body={search ? 'Try another name or specialty.' : 'Add a doctor account to begin building the hospital directory.'} />}
+    </section>
+    {modal && <AdminCreateModal kind={modal.kind} doctorId={modal.doctorId} departments={departments} onClose={() => setModal(null)} onSaved={() => { setRefresh((value) => value + 1); notify(modal.kind === 'doctor' ? 'Doctor account created.' : 'Clinic schedule added.') }} />}
+  </>
+}
+
+function AdminDepartmentsPage({ search }: { search: string }) {
+  const notify = useToast()
+  const [departments, setDepartments] = useState<DepartmentRecord[]>([])
+  const [doctors, setDoctors] = useState<DoctorRecord[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [refresh, setRefresh] = useState(0)
+  const [createOpen, setCreateOpen] = useState(false)
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    setError('')
+    Promise.all([listDepartments(), listDoctors()])
+      .then(([departmentRows, doctorRows]) => { if (active) { setDepartments(departmentRows); setDoctors(doctorRows) } })
+      .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'Could not load departments.') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [refresh])
+  const rows = departments.filter((department) => `${department.name} ${department.location ?? ''}`.toLowerCase().includes(search.toLowerCase()))
+  return <>
+    <div className="list-page-intro"><div><h1>Departments</h1><p>Organize hospital services and assign doctors to their care teams.</p></div><Button onClick={() => setCreateOpen(true)}>Add department <BriefcaseMedical size={15} /></Button></div>
+    {error && <p className="field-error" role="alert">{error}</p>}
+    <section className="panel list-panel admin-directory-panel"><div className="list-toolbar"><div className="list-toolbar-info"><strong>{loading ? '…' : rows.length}</strong><span>· {loading ? 'Loading departments' : 'Active departments'}</span></div><button className="export-button" onClick={() => setRefresh((value) => value + 1)}><Activity size={14} /> Refresh</button></div>
+      {loading ? <EmptyState icon={BriefcaseMedical} title="Loading departments" body="Fetching hospital services and doctor assignments." /> : rows.length ? <div className="table-scroll"><table className="data-table"><thead><tr><th>Department</th><th>Location</th><th>Doctors</th><th>Reference</th><th>Status</th></tr></thead><tbody>{rows.map((department) => { const count = doctors.filter((doctor) => doctor.department_id === department.id).length; return <tr key={department.id}><td><strong>{department.name}</strong></td><td>{department.location || 'Not set'}</td><td>{count}</td><td className="table-code">DEP-{department.id.slice(0, 8).toUpperCase()}</td><td><StatusPill status="Active" /></td></tr> })}</tbody></table></div> : <EmptyState icon={BriefcaseMedical} title={search ? 'No matching departments' : 'No departments yet'} body={search ? 'Try another department or location.' : 'Create a department to organize the doctor directory.'} />}
+    </section>
+    {createOpen && <AdminCreateModal kind="department" onClose={() => setCreateOpen(false)} onSaved={() => { setRefresh((value) => value + 1); notify('Department created.') }} />}
+  </>
+}
+
+function ServiceUnavailablePage({ title, detail, icon: Icon = CircleHelp }: { title: string; detail: string; icon?: LucideIcon }) {
+  return <><div className="list-page-intro"><div><h1>{title}</h1><p>{detail}</p></div><span className="demo-pill"><span /> FRONTEND READY</span></div><section className="panel service-placeholder"><EmptyState icon={Icon} title="Waiting for a hospital data endpoint" body="This screen is prepared, but the current backend does not provide the records needed to show verified live data here." /><div className="inventory-disclaimer"><ShieldCheck size={15} /><span>No sample patient, staff, request, or audit records are shown in the authenticated workspace.</span></div></section></>
 }
 
 function AssistantPreview({ demo = false }: { demo?: boolean }) {
@@ -458,30 +664,50 @@ function AssistantPreview({ demo = false }: { demo?: boolean }) {
   return <div className="assistant-layout"><div className="assistant-intro panel"><div className="assistant-emblem"><Sparkles size={21} /></div><div className="eyebrow eyebrow-muted">MEDINEX AI · {demo ? 'PREVIEW' : 'ASSISTANT'}</div><h2>Here to help you<br />find your next step.</h2><p>A multilingual assistant designed to help people navigate appointments, hospital services and common questions.</p><div className="assistant-capabilities"><span><CheckCircle2 size={15} /> English, Hindi & Hinglish</span><span><CheckCircle2 size={15} /> Appointment guidance</span><span><CheckCircle2 size={15} /> Clear handoff to care teams</span></div><div className="assistant-safety"><ShieldCheck size={16} /><p>Not for diagnosis or medical advice. For urgent symptoms, contact local emergency services or your care team.</p></div></div><section className="chat-panel panel"><div className="chat-header"><div><span className="chat-avatar"><Sparkles size={16} /></span><span><strong>Medinex assistant</strong><small><i /> {demo ? 'Demo mode' : 'Connected to Medinex API'}</small></span></div><button className="icon-link" aria-label="Conversation information"><CircleHelp size={17} /></button></div><div className="chat-transcript" aria-live="polite">{messages.map((message, index) => <div className={`chat-message message-${message.from}`} key={index}><span className="chat-message-icon">{message.from === 'assistant' ? <Sparkles size={14} /> : 'M'}</span><p>{message.text}</p></div>)}</div><div className="suggested-prompts"><span>TRY ASKING</span><button type="button" onClick={() => setInput('Find a cardiologist')}>Find a cardiologist</button><button type="button" onClick={() => setInput('Are ICU beds available?')}>Check bed availability</button></div><form className="chat-compose" onSubmit={send}><input aria-label="Message the Medinex assistant" value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask about appointments or services…" disabled={sending} /><button aria-label="Send message" type="submit" disabled={sending || !input.trim()}><Send size={16} /></button></form><p className="chat-disclaimer">Replies use the hospital assistant service when configured. Do not share unnecessary medical identifiers.</p></section></div>
 }
 
+type ListRow = { name: string; detail: string; date: string; status: string; ref: string; id?: string }
+
 function GeneralListPage({ page, role, search }: { page: string; role: PortalRole; search: string }) {
   const [filter, setFilter] = useState('All statuses')
+  const [liveRows, setLiveRows] = useState<ListRow[]>([])
+  const [loadingLiveRows, setLoadingLiveRows] = useState(false)
+  const [liveRowsError, setLiveRowsError] = useState('')
+  const [canceling, setCanceling] = useState('')
   const { token } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
-  const livePatientAppointments = role === 'patient' && page === 'appointments' && !location.pathname.startsWith('/demo/')
-  const [liveRows, setLiveRows] = useState<{ name: string; detail: string; date: string; status: string; ref: string }[]>([])
-  const [loadingLiveRows, setLoadingLiveRows] = useState(false)
-  const [liveRowsError, setLiveRowsError] = useState('')
+  const notify = useToast()
+  const demo = location.pathname.startsWith('/demo/')
+  const liveDoctorPatients = !demo && role === 'doctor' && page === 'patients'
+  const liveRecordsPage = !demo && (page === 'appointments' || role === 'doctor' && (page === 'schedule' || page === 'patients'))
   useEffect(() => {
-    if (!livePatientAppointments || !token) return
+    if (!liveRecordsPage || !token) return
     let active = true
     setLoadingLiveRows(true)
     setLiveRowsError('')
     Promise.all([listMyAppointments(token), listDoctors()])
       .then(([appointments, doctors]) => {
         if (!active) return
+        if (liveDoctorPatients) {
+          const patients = new Map<string, AppointmentRecord[]>()
+          appointments.forEach((appointment) => patients.set(appointment.patient_id, [...(patients.get(appointment.patient_id) ?? []), appointment]))
+          setLiveRows([...patients.entries()].map(([patientId, visits]) => ({
+            name: `Patient ${patientId.slice(0, 8).toUpperCase()}`,
+            detail: `${visits.length} appointment${visits.length === 1 ? '' : 's'} in your care schedule`,
+            date: new Date(Math.max(...visits.map((item) => new Date(item.start_at).getTime()))).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' }),
+            status: 'Linked to your schedule',
+            ref: `PAT-${patientId.slice(0, 8).toUpperCase()}`,
+          })))
+          return
+        }
         setLiveRows(appointments.map((appointment) => {
           const doctor = doctors.find((item) => item.id === appointment.doctor_id)
+          const isPatient = role === 'patient'
           return {
-            name: doctor?.full_name ?? 'Hospital doctor',
-            detail: doctor?.specialization ?? 'Specialty not listed',
-            date: `${new Date(appointment.start_at).toLocaleDateString('en', { month: 'short', day: 'numeric' })}, ${formatSlotTime(appointment.start_at)}`,
-            status: appointment.status,
+            id: appointment.id,
+            name: isPatient ? doctor?.full_name ?? 'Hospital doctor' : `Patient ${appointment.patient_id.slice(0, 8).toUpperCase()}`,
+            detail: isPatient ? doctor?.specialization ?? 'Specialty not listed' : doctor ? `${doctor.full_name} · ${doctor.specialization}` : 'Hospital appointment',
+            date: `${new Date(appointment.start_at).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}, ${formatSlotTime(appointment.start_at)}`,
+            status: appointment.status.charAt(0).toUpperCase() + appointment.status.slice(1),
             ref: `APT-${appointment.id.slice(0, 8).toUpperCase()}`,
           }
         }))
@@ -489,8 +715,8 @@ function GeneralListPage({ page, role, search }: { page: string; role: PortalRol
       .catch((cause) => { if (active) setLiveRowsError(cause instanceof Error ? cause.message : 'Could not load your appointments.') })
       .finally(() => { if (active) setLoadingLiveRows(false) })
     return () => { active = false }
-  }, [livePatientAppointments, token])
-  const demoRows = page === 'appointments' || page === 'schedule' ? demoAppointments.map((item) => ({ name: item.patient, detail: item.specialty, date: item.date, status: item.status, ref: item.code }))
+  }, [liveRecordsPage, liveDoctorPatients, role, token])
+  const demoRows: ListRow[] = page === 'appointments' || page === 'schedule' ? demoAppointments.map((item) => ({ name: item.patient, detail: item.specialty, date: item.date, status: item.status, ref: item.code }))
     : page === 'doctors' ? demoDoctors.map((item) => ({ name: item.name, detail: item.specialty, date: item.availability, status: 'Available', ref: item.location }))
     : page === 'patients' ? demoAppointments.map((item, index) => ({ name: item.patient, detail: ['Patient · ID 1092', 'Patient · ID 1093', 'Patient · ID 1094', 'Patient · ID 1095', 'Patient · ID 1096'][index], date: item.date, status: index === 1 ? 'Follow-up' : 'Active', ref: item.code }))
     : page === 'blood-requests' ? [{ name: 'BR-3102 · O−', detail: 'Emergency department', date: 'Today, 9:42 AM', status: 'Under review', ref: 'Urgent' }, { name: 'BR-3101 · A+', detail: 'Maternity ward', date: 'Today, 8:10 AM', status: 'Approved', ref: 'Routine' }, { name: 'BR-3100 · B−', detail: 'Surgical services', date: 'Yesterday, 4:18 PM', status: 'Pending', ref: 'Routine' }]
@@ -498,40 +724,58 @@ function GeneralListPage({ page, role, search }: { page: string; role: PortalRol
     : page === 'staff' ? ['Dr. Ananya Rao', 'Maya Fernandes', 'Dr. Priya Nair', 'Ritesh Sharma'].map((name, index) => ({ name, detail: ['Doctor · Cardiology', 'Hospital staff · Admissions', 'Doctor · Cardiology', 'Hospital staff · Operations'][index], date: 'On shift', status: 'Active', ref: `STF-10${index + 1}` }))
     : page === 'audit-logs' ? [{ name: 'Appointment confirmed', detail: 'Care team · Cardiology', date: '10:32 AM', status: 'Complete', ref: 'ACT-0082' }, { name: 'Inventory reviewed', detail: 'Hospital staff', date: '10:05 AM', status: 'Complete', ref: 'ACT-0081' }, { name: 'Bed status updated', detail: 'Admissions · General', date: '9:40 AM', status: 'Complete', ref: 'ACT-0080' }]
     : []
-  const rows = livePatientAppointments ? liveRows : demoRows
+  const rows = demo ? demoRows : liveRecordsPage ? liveRows : []
   const filtered = rows.filter((row) => `${row.name} ${row.detail} ${row.ref}`.toLowerCase().includes(search.toLowerCase()) && (filter === 'All statuses' || row.status === filter))
   const title = routeTitles[page]?.title ?? 'Workspace'
   const description = routeTitles[page]?.subtitle ?? ''
   const availableFilters = ['All statuses', ...new Set(rows.map((item) => item.status))]
-  const notify = useToast()
-  const actionLabel = livePatientAppointments ? 'Book appointment' : page === 'doctors' || page === 'staff' ? 'Add team member' : page === 'blood-requests' ? 'Create request' : page === 'departments' ? 'Add department' : undefined
-  return <><div className="list-page-intro"><div><h1>{title}</h1><p>{description}</p></div>{actionLabel && <Button onClick={() => livePatientAppointments ? navigate('/patient/doctors') : notify('This action will be available when the connected hospital service is configured.')}><span>+</span>{actionLabel}</Button>}</div>{liveRowsError && <p className="field-error" role="alert">{liveRowsError}</p>}<div className="panel list-panel"><div className="list-toolbar"><div className="list-toolbar-info"><strong>{rows.length} {rows.length === 1 ? 'record' : 'records'}</strong><span>· {livePatientAppointments ? 'Live data' : 'Sample data'}</span></div><label className="sort-select"><Filter size={14} /><select value={filter} onChange={(event) => setFilter(event.target.value)}>{availableFilters.map((option) => <option key={option}>{option}</option>)}</select><ChevronDown size={13} /></label><button className="export-button" onClick={() => notify('Export is available after report permissions are connected.')}><FileDown size={15} /> Export</button></div>{loadingLiveRows ? <EmptyState icon={CalendarDays} title="Loading appointments" body="Fetching your hospital schedule." /> : filtered.length ? <div className="table-scroll"><table className="data-table"><thead><tr><th>{page === 'appointments' ? role === 'patient' ? 'Doctor' : 'Patient' : page === 'doctors' ? 'Doctor' : page === 'blood-requests' ? 'Request' : page === 'departments' ? 'Department' : page === 'audit-logs' ? 'Activity' : 'Name'}</th><th>Details</th><th>{page === 'appointments' ? 'Date & time' : 'Updated'}</th><th>Status</th><th>Reference</th><th /></tr></thead><tbody>{filtered.map((row) => <tr key={row.ref}><td><div className="person-cell"><span className="table-avatar">{row.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><span><strong>{row.name}</strong><small>{role === 'admin' ? 'Hospital workspace' : 'Your care workspace'}</small></span></div></td><td>{row.detail}</td><td>{row.date}</td><td><StatusPill status={row.status} /></td><td className="table-code">{row.ref}</td><td><button className="table-action" onClick={() => notify('Record details will be available through the connected hospital service.')}>Open</button></td></tr>)}</tbody></table></div> : <EmptyState icon={Search} title="No records found" body={livePatientAppointments ? 'No appointments are booked yet.' : 'Adjust your search or status filter and try again.'} />}<div className="table-pagination"><span>Showing {filtered.length} of {rows.length} {livePatientAppointments ? 'appointments' : 'sample records'}</span><span><button aria-label="Previous page" disabled><ChevronLeft size={16} /></button><b>1</b><button aria-label="Next page" disabled><ChevronRight size={16} /></button></span></div></div></>
+  const actionLabel = page === 'appointments' && role === 'patient' ? 'Book appointment' : undefined
+  const cancel = async (row: ListRow) => {
+    if (!row.id || !token || !window.confirm('Cancel this appointment?')) return
+    setCanceling(row.id)
+    try {
+      const updated = await cancelAppointment(row.id, token)
+      setLiveRows((current) => current.map((item) => item.id === row.id ? { ...item, status: updated.status.charAt(0).toUpperCase() + updated.status.slice(1) } : item))
+      notify('Appointment cancelled.')
+    } catch (cause) {
+      setLiveRowsError(cause instanceof Error ? cause.message : 'Could not cancel this appointment.')
+    } finally { setCanceling('') }
+  }
+  return <><div className="list-page-intro"><div><h1>{title}</h1><p>{description}</p></div>{actionLabel && <Button onClick={() => navigate(demo ? '/demo/patient/doctors' : '/patient/doctors')}>{actionLabel} <ArrowRight size={15} /></Button>}</div>{liveRowsError && <p className="field-error" role="alert">{liveRowsError}</p>}<div className="panel list-panel"><div className="list-toolbar"><div className="list-toolbar-info"><strong>{loadingLiveRows ? '…' : rows.length} {rows.length === 1 ? 'record' : 'records'}</strong><span>· {demo ? 'Sample data' : liveRecordsPage ? 'Live appointment data' : 'Service not connected'}</span></div><label className="sort-select"><Filter size={14} /><select value={filter} onChange={(event) => setFilter(event.target.value)}>{availableFilters.map((option) => <option key={option}>{option}</option>)}</select><ChevronDown size={13} /></label><button className="export-button" disabled title="Export will be available when the reporting endpoint is connected"><FileDown size={15} /> Export</button></div>{loadingLiveRows ? <EmptyState icon={CalendarDays} title="Loading hospital records" body="Fetching appointments linked to your account." /> : filtered.length ? <div className="table-scroll"><table className="data-table"><thead><tr><th>{role === 'patient' ? 'Doctor' : 'Patient record'}</th><th>Details</th><th>{liveDoctorPatients ? 'Latest appointment' : 'Date & time'}</th><th>Status</th><th>Reference</th><th>Action</th></tr></thead><tbody>{filtered.map((row) => <tr key={row.ref}><td><div className="person-cell"><span className="table-avatar">{row.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><span><strong>{row.name}</strong><small>{demo ? role === 'admin' ? 'Sample workspace' : 'Sample care workspace' : liveDoctorPatients ? 'Identified by account ID' : 'Hospital record'}</small></span></div></td><td>{row.detail}</td><td>{row.date}</td><td><StatusPill status={row.status} /></td><td className="table-code">{row.ref}</td><td>{row.id && !['Cancelled', 'Completed'].includes(row.status) ? <button className="table-action" disabled={canceling === row.id} onClick={() => void cancel(row)}>{canceling === row.id ? 'Cancelling…' : 'Cancel'}</button> : demo ? <span className="table-action-muted">Preview</span> : <span className="table-action-muted">—</span>}</td></tr>)}</tbody></table></div> : <EmptyState icon={liveDoctorPatients ? Users : Search} title={demo ? 'No records found' : liveDoctorPatients ? 'No patient appointments yet' : 'No appointments yet'} body={demo ? 'Adjust your search or status filter and try again.' : liveRowsError ? 'Resolve the service message above and refresh the page.' : liveRecordsPage ? 'Booked appointments will appear here as the backend returns them.' : 'This authenticated workspace has no endpoint for this list yet.'} />}<div className="table-pagination"><span>Showing {filtered.length} of {rows.length} {liveRecordsPage ? 'hospital records' : 'sample records'}</span><span><button aria-label="Previous page" disabled><ChevronLeft size={16} /></button><b>1</b><button aria-label="Next page" disabled><ChevronRight size={16} /></button></span></div></div></>
 }
 
-function ProfilePage({ role }: { role: PortalRole }) {
+function ProfilePage({ role, demo = false, user }: { role: PortalRole; demo?: boolean; user: ReturnType<typeof useAuth>['user'] }) {
   const notify = useToast()
   const roleName = role === 'patient' ? 'Patient' : role === 'doctor' ? 'Doctor' : 'Hospital administrator'
-  return <div className="profile-layout"><section className="panel profile-card"><span className="profile-avatar">{role === 'patient' ? 'MF' : role === 'doctor' ? 'AR' : 'AM'}</span><h2>{role === 'patient' ? 'Maya Fernandes' : role === 'doctor' ? 'Dr. Ananya Rao' : 'Alex Morgan'}</h2><p>{roleName} · Medinex demo workspace</p><StatusPill status="Demo account" /><button className="button button-secondary" onClick={() => notify('Profile editing will be available when secure account services are connected.')}>Edit profile <ArrowRight size={15} /></button></section><section className="panel profile-details"><SectionTitle title="Personal information" /><div className="profile-fields"><label>Full name<span>{role === 'patient' ? 'Maya Fernandes' : role === 'doctor' ? 'Dr. Ananya Rao' : 'Alex Morgan'}</span></label><label>Email address<span>maya@example.com</span></label><label>Phone number<span>Not provided</span></label><label>Account type<span>{roleName}</span></label></div><div className="profile-privacy"><ShieldCheck size={16} /><span>Profile values are sample information in this frontend preview.</span></div></section></div>
+  if (!demo) return <div className="profile-layout"><section className="panel profile-card"><span className="profile-avatar">{userInitials(user?.email)}</span><h2>{user?.email ?? 'Signed-in account'}</h2><p>{roleName} · Medinex workspace</p><StatusPill status={user?.is_active ? 'Active account' : 'Inactive account'} /><span className="profile-readonly-note">Account profile is read-only in this frontend.</span></section><section className="panel profile-details"><SectionTitle title="Account information" /><div className="profile-fields"><label>Email address<span>{user?.email ?? 'Unavailable'}</span></label><label>Account type<span>{roleName}</span></label><label>Account ID<span className="table-code">{user?.id ?? 'Unavailable'}</span></label><label>Account status<span>{user?.is_active ? 'Active' : 'Inactive'}</span></label></div><div className="profile-privacy"><ShieldCheck size={16} /><span>The current account endpoint does not expose personal profile details such as name or phone.</span></div></section></div>
+  return <div className="profile-layout"><section className="panel profile-card"><span className="profile-avatar">{demo ? (role === 'patient' ? 'MF' : role === 'doctor' ? 'AR' : 'AM') : userInitials(user?.email)}</span><h2>{role === 'patient' ? 'Maya Fernandes' : role === 'doctor' ? 'Dr. Ananya Rao' : 'Alex Morgan'}</h2><p>{roleName} · Medinex demo workspace</p><StatusPill status="Demo account" /><button className="button button-secondary" onClick={() => notify('Profile editing will be available when secure account services are connected.')}>Edit profile <ArrowRight size={15} /></button></section><section className="panel profile-details"><SectionTitle title="Personal information" /><div className="profile-fields"><label>Full name<span>{role === 'patient' ? 'Maya Fernandes' : role === 'doctor' ? 'Dr. Ananya Rao' : 'Alex Morgan'}</span></label><label>Email address<span>maya@example.com</span></label><label>Phone number<span>Not provided</span></label><label>Account type<span>{roleName}</span></label></div><div className="profile-privacy"><ShieldCheck size={16} /><span>Profile values are sample information in this frontend preview.</span></div></section></div>
 }
 
-function SettingsPage() {
-  const [enabled, setEnabled] = useState<Record<string, boolean>>({ appointments: true, inventory: true, weekly: false })
+function SettingsPage({ role, demo = false }: { role: PortalRole; demo?: boolean }) {
+  const storageKey = `medinex.preferences.${demo ? 'demo' : role}`
+  const [enabled, setEnabled] = useState<Record<string, boolean>>(() => {
+    try { return { appointments: true, inventory: true, weekly: false, ...JSON.parse(window.localStorage.getItem(storageKey) ?? '{}') as Record<string, boolean> } }
+    catch { return { appointments: true, inventory: true, weekly: false } }
+  })
+  const [saved, setSaved] = useState(false)
   const notify = useToast()
   const settings = [['appointments', 'Appointment reminders', 'In-app updates for changes and upcoming visits.'], ['inventory', 'Operational alerts', 'Notify authorized staff when demo stock requires attention.'], ['weekly', 'Weekly activity summary', 'A weekly digest of workspace activity.']]
-  return <div className="settings-layout"><section className="panel settings-card"><SectionTitle title="Notifications" /><p>Choose the updates you would like to preview in this workspace.</p>{settings.map(([id, title, description]) => <div className="setting-row" key={id}><div><strong>{title}</strong><span>{description}</span></div><button role="switch" aria-checked={enabled[id]} className={`switch ${enabled[id] ? 'on' : ''}`} aria-label={title} onClick={() => setEnabled((state) => ({ ...state, [id]: !state[id] }))}><i /></button></div>)}</section><section className="panel settings-card"><SectionTitle title="Workspace preferences" /><div className="setting-row"><div><strong>Hospital timezone</strong><span>Dates and times shown in your local preview.</span></div><span className="pref-value">Asia/Kolkata</span></div><div className="setting-row"><div><strong>Data environment</strong><span>Current source for visible dashboard content.</span></div><span className="demo-pill"><span /> SAMPLE DATA</span></div><Button variant="secondary" onClick={() => notify('These preferences are kept for this preview only.')}>Save preferences <Check size={15} /></Button></section></div>
+  const save = () => { window.localStorage.setItem(storageKey, JSON.stringify(enabled)); setSaved(true); notify('Preferences saved in this browser. They are not synced to hospital settings.') }
+  return <div className="settings-layout"><section className="panel settings-card"><SectionTitle title="Notifications" /><p>Choose the updates you would like to enable for this browser.</p>{settings.map(([id, title, description]) => <div className="setting-row" key={id}><div><strong>{title}</strong><span>{description}</span></div><button role="switch" aria-checked={enabled[id]} className={`switch ${enabled[id] ? 'on' : ''}`} aria-label={title} onClick={() => { setEnabled((state) => ({ ...state, [id]: !state[id] })); setSaved(false) }}><i /></button></div>)}</section><section className="panel settings-card"><SectionTitle title="Workspace preferences" /><div className="setting-row"><div><strong>Hospital timezone</strong><span>Times follow your browser until the hospital sets a timezone.</span></div><span className="pref-value">{demo ? 'Asia/Kolkata · preview' : Intl.DateTimeFormat().resolvedOptions().timeZone}</span></div><div className="setting-row"><div><strong>Data environment</strong><span>{demo ? 'Synthetic preview content.' : 'Authenticated hospital workspace.'}</span></div><span className="demo-pill"><span /> {demo ? 'SAMPLE DATA' : 'ACCOUNT ACCESS'}</span></div><Button variant="secondary" onClick={save}>{saved ? 'Saved' : 'Save preferences'} <Check size={15} /></Button></section></div>
 }
 
-function NotificationsPage() {
+function NotificationsPage({ demo = false }: { demo?: boolean }) {
   const [read, setRead] = useState(false)
   const items: { title: string; text: string; time: string; icon: LucideIcon }[] = [
     { title: 'Appointment confirmed', text: 'Your visit with Dr. Priya Nair is confirmed for today at 3:30 PM.', time: '10 min ago', icon: CalendarDays },
     { title: 'Reminder · Tomorrow', text: 'You have an upcoming visit with Dr. Arjun Mehta at 10:00 AM.', time: 'Yesterday', icon: Bell },
     { title: 'Profile update', text: 'Your care team information was refreshed.', time: '12 Oct 2026', icon: Users },
   ]
-  return <section className="panel notifications-panel"><SectionTitle title="Recent updates" action={<button className="text-link small-link" onClick={() => setRead(true)}>Mark all as read <Check size={14} /></button>} />{items.map(({ title, text, time, icon: Icon }, index) => <article className={`notification-row ${index === 0 && !read ? 'notification-unread' : ''}`} key={title}><span className="notification-icon"><Icon size={17} /></span><div><strong>{title}</strong><p>{text}</p><small>{time}</small></div>{index === 0 && !read && <i className="notification-dot" />}</article>)}</section>
+  return demo ? <section className="panel notifications-panel"><SectionTitle title="Recent sample updates" action={<button className="text-link small-link" onClick={() => setRead(true)}>Mark all as read <Check size={14} /></button>} />{items.map(({ title, text, time, icon: Icon }, index) => <article className={`notification-row ${index === 0 && !read ? 'notification-unread' : ''}`} key={title}><span className="notification-icon"><Icon size={17} /></span><div><strong>{title}</strong><p>{text}</p><small>{time}</small></div>{index === 0 && !read && <i className="notification-dot" />}</article>)}</section> : <section className="panel notifications-panel"><SectionTitle title="Notifications" /><EmptyState icon={Bell} title="No notifications yet" body="The current backend does not include a notification feed. Appointment and inventory data is available in its own workspace pages." /></section>
 }
 
-function ReportsPage() {
+function ReportsPage({ demo = false, appointments = [], doctors = [] }: { demo?: boolean; appointments?: typeof demoAppointments; doctors?: DoctorRecord[] }) {
+  if (!demo) return <><div className="report-kpis"><MetricCard label="Appointment records" value={String(appointments.length)} delta="Current hospital records" icon={CalendarDays} color="blue" /><MetricCard label="Doctor directory" value={String(doctors.length)} delta="Current active listings" icon={Stethoscope} color="purple" /><MetricCard label="Cancelled visits" value={String(appointments.filter((item) => item.status.toLowerCase() === 'cancelled').length)} delta="Current hospital records" icon={Activity} color="orange" /></div><section className="panel report-panel"><div className="report-title"><div><SectionTitle title="Operational reporting" /><p>Current counts from the appointment and doctor directory endpoints.</p></div></div><div className="service-placeholder report-service"><EmptyState icon={ChartNoAxesCombined} title="Trend reports are not connected yet" body="The backend does not provide historical analytics or admissions data. These totals are current records only, not a time series." /></div></section></>
   const kpis: { label: string; value: string; delta: string; icon: LucideIcon }[] = [
     { label: 'Appointments', value: '1,284', delta: '+8.2%', icon: CalendarDays },
     { label: 'Avg. wait time', value: '18 min', delta: '−4 min', icon: Clock3 },
@@ -543,10 +787,15 @@ function ReportsPage() {
 function PortalGate({ role }: { role: PortalRole }) {
   const { user, ready } = useAuth()
   if (!ready) return <main className="auth-layout"><section className="auth-main"><p className="auth-subtitle">Loading your secure workspace…</p></section></main>
-  if (!user) return <Navigate to="/login" replace />
+  if (!user) return <Navigate to={role === 'admin' ? '/12admin/sign-in' : '/login'} replace />
   const destination = pathForRole(user.role)
-  if (user.role !== role) return destination ? <Navigate to={destination} replace /> : <Navigate to="/login" replace />
+  if (user.role !== role) return destination ? <Navigate to={destination} replace /> : <Navigate to={role === 'admin' ? '/12admin/sign-in' : '/login'} replace />
   return <PortalLayout role={role} />
+}
+
+function LegacyAdminRedirect() {
+  const location = useLocation()
+  return <Navigate to={`${location.pathname.replace(/^\/admin(?=\/|$)/, '/12admin')}${location.search}${location.hash}`} replace />
 }
 
 function PortalLayout({ role, demo = false }: { role: PortalRole; demo?: boolean }) {
@@ -561,19 +810,22 @@ function PortalLayout({ role, demo = false }: { role: PortalRole; demo?: boolean
   const [search, setSearch] = useState('')
   const [bookingOpen, setBookingOpen] = useState(false)
   const [selectedDoctor, setSelectedDoctor] = useState<string | undefined>()
-  const [appointments, setAppointments] = useState(demo ? demoAppointments : [])
+  const [appointments, setAppointments] = useState<typeof demoAppointments>(demo ? demoAppointments : [])
+  const [appointmentRecords, setAppointmentRecords] = useState<AppointmentRecord[]>([])
   const [liveDoctors, setLiveDoctors] = useState<DoctorRecord[]>([])
-  const [doctorsLoading, setDoctorsLoading] = useState(!demo && role === 'patient')
+  const [doctorsLoading, setDoctorsLoading] = useState(!demo)
   const [doctorsError, setDoctorsError] = useState('')
+  const [appointmentsLoading, setAppointmentsLoading] = useState(!demo)
+  const [appointmentsError, setAppointmentsError] = useState('')
   const nav = portalNavigation[role]
   const pageTitle = routeTitles[page]?.title ?? 'Workspace'
   const openBooking = (doctor?: string) => { setSelectedDoctor(doctor); setBookingOpen(true) }
-  const portalRoot = demo ? `/demo/${role}` : `/${role}`
-  const pathFor = (path: string) => demo ? path.replace(`/${role}/`, `${portalRoot}/`) : path
+  const portalRoot = demo ? `/demo/${role}` : role === 'admin' ? '/12admin' : `/${role}`
+  const pathFor = (path: string) => demo ? path.replace(`/${role}/`, `${portalRoot}/`) : role === 'admin' ? path.replace(/^\/admin(?=\/|$)/, portalRoot) : path
   const activeRoute = pathFor(page === 'wards' || page === 'beds' ? '/admin/wards' : `/${role}/${page}`)
   const date = new Intl.DateTimeFormat('en', { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date())
   useEffect(() => {
-    if (demo || role !== 'patient') return
+    if (demo) return
     let active = true
     setDoctorsLoading(true)
     setDoctorsError('')
@@ -586,21 +838,46 @@ function PortalLayout({ role, demo = false }: { role: PortalRole; demo?: boolean
   useEffect(() => {
     if (demo) {
       setAppointments(demoAppointments)
+      setAppointmentRecords([])
+      setAppointmentsLoading(false)
       return
     }
     setAppointments([])
-    if (role !== 'patient' || !token || doctorsLoading) return
+    setAppointmentRecords([])
+    setAppointmentsError('')
+    if (!token || doctorsLoading) return
     let active = true
+    setAppointmentsLoading(true)
     listMyAppointments(token)
-      .then((rows) => { if (active) setAppointments(rows.map((row) => displayAppointment(row, liveDoctors))) })
-      .catch((cause) => { if (active) notify(cause instanceof Error ? cause.message : 'Could not load your appointments.') })
+      .then((rows) => { if (active) { setAppointmentRecords(rows); setAppointments(rows.map((row) => { const item = displayAppointment(row, liveDoctors); return role === 'patient' ? item : { ...item, patient: `Patient ${row.patient_id.slice(0, 8).toUpperCase()}` } })) } })
+      .catch((cause) => { if (active) { const message = cause instanceof Error ? cause.message : 'Could not load your appointments.'; setAppointmentsError(message); notify(message) } })
+      .finally(() => { if (active) setAppointmentsLoading(false) })
     return () => { active = false }
   }, [demo, role, token, doctorsLoading, liveDoctors])
-  return <div className={`portal-shell ${dark ? 'theme-dark' : ''}`}><aside className={`portal-sidebar ${menuOpen ? 'sidebar-open' : ''}`}><div className="sidebar-brand-row"><Brand /><button className="mobile-nav-toggle side-close" aria-label="Close navigation" onClick={() => setMenuOpen(false)}><X size={18} /></button></div><div className="workspace-select"><span className="workspace-avatar">{role === 'patient' ? 'M' : role === 'doctor' ? 'C' : 'H'}</span><span><strong>{demo ? (role === 'patient' ? 'Maya’s care' : role === 'doctor' ? 'Care team' : 'Meridian Hospital') : user?.email ?? 'Medinex workspace'}</strong><small>{roleLabels[role]}</small></span><ChevronDown size={14} /></div><div className="sidebar-label">WORKSPACE</div><nav className="sidebar-nav" aria-label="Workspace navigation">{nav.map((item, index) => <div key={item.path}>{item.group && <div className={`nav-group-label ${index ? 'nav-group-spaced' : ''}`}>{item.group}</div>}<NavLink onClick={() => setMenuOpen(false)} to={pathFor(item.path)} className={() => `sidebar-link ${activeRoute === pathFor(item.path) || (activeRoute === pathFor('/admin/wards') && page === 'beds') ? 'active' : ''}`}><item.icon size={17} /><span>{item.label}</span>{item.label === 'Notifications' && <i className="nav-count">3</i>}</NavLink></div>)}</nav><div className="sidebar-bottom"><div className="help-card"><span><CircleHelp size={17} /></span><strong>Need a hand?</strong><small>Our team is here to help.</small><Link to="/contact">Get support <ArrowRight size={13} /></Link></div><div className="sidebar-user"><span className="user-avatar">{role === 'patient' ? 'MF' : role === 'doctor' ? 'AR' : 'AM'}</span><span><strong>{demo ? (role === 'patient' ? 'Maya Fernandes' : role === 'doctor' ? 'Dr. Ananya Rao' : 'Alex Morgan') : user?.email ?? 'Signed in'}</strong><small>{demo ? (role === 'patient' ? 'Patient' : role === 'doctor' ? 'Cardiologist' : 'Administrator') : roleLabels[role]}</small></span><button aria-label="Sign out" onClick={() => { signOut(); navigate('/login') }}><LogOut size={16} /></button></div></div></aside>
+  return <div className={`portal-shell ${dark ? 'theme-dark' : ''}`}><aside className={`portal-sidebar ${menuOpen ? 'sidebar-open' : ''}`}><div className="sidebar-brand-row"><Brand /><button className="mobile-nav-toggle side-close" aria-label="Close navigation" onClick={() => setMenuOpen(false)}><X size={18} /></button></div><div className="workspace-select"><span className="workspace-avatar">{demo ? (role === 'patient' ? 'M' : role === 'doctor' ? 'C' : 'H') : userInitials(user?.email).slice(0, 1)}</span><span><strong>{demo ? (role === 'patient' ? 'Maya’s care' : role === 'doctor' ? 'Care team' : 'Meridian Hospital') : user?.email ?? 'Medinex workspace'}</strong><small>{roleLabels[role]}</small></span><ChevronDown size={14} /></div><div className="sidebar-label">WORKSPACE</div><nav className="sidebar-nav" aria-label="Workspace navigation">{nav.map((item, index) => <div key={item.path}>{item.group && <div className={`nav-group-label ${index ? 'nav-group-spaced' : ''}`}>{item.group}</div>}<NavLink onClick={() => setMenuOpen(false)} to={pathFor(item.path)} className={() => `sidebar-link ${activeRoute === pathFor(item.path) || (activeRoute === pathFor('/admin/wards') && page === 'beds') ? 'active' : ''}`}><item.icon size={17} /><span>{item.label}</span>{demo && item.label === 'Notifications' && <i className="nav-count">3</i>}</NavLink></div>)}</nav><div className="sidebar-bottom"><div className="help-card"><span><CircleHelp size={17} /></span><strong>Need a hand?</strong><small>Our team is here to help.</small><Link to="/contact">Get support <ArrowRight size={13} /></Link></div><div className="sidebar-user"><span className="user-avatar">{demo ? (role === 'patient' ? 'MF' : role === 'doctor' ? 'AR' : 'AM') : userInitials(user?.email)}</span><span><strong>{demo ? (role === 'patient' ? 'Maya Fernandes' : role === 'doctor' ? 'Dr. Ananya Rao' : 'Alex Morgan') : user?.email ?? 'Signed in'}</strong><small>{demo ? (role === 'patient' ? 'Patient' : role === 'doctor' ? 'Cardiologist' : 'Administrator') : roleLabels[role]}</small></span><button aria-label="Sign out" onClick={() => { signOut(); navigate(role === 'admin' ? '/12admin/sign-in' : '/login') }}><LogOut size={16} /></button></div></div></aside>
     {menuOpen && <button className="sidebar-scrim" aria-label="Close menu" onClick={() => setMenuOpen(false)} />}
-    <div className="portal-main"><header className="portal-header"><button className="mobile-nav-toggle header-menu" aria-label="Open navigation" onClick={() => setMenuOpen(true)}><Menu size={20} /></button><div className="portal-breadcrumb"><Link to={pathFor(`/${role}/dashboard`)}>Workspace</Link><ChevronRight size={14} /><span>{page === 'dashboard' ? 'Overview' : pageTitle}</span></div><div className="portal-header-actions"><label className="portal-search"><Search size={16} /><input placeholder="Search this workspace…" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search workspace" /><kbd>⌘ K</kbd></label><button className="theme-toggle" onClick={() => setDark(!dark)} aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}>{dark ? <Sun size={17} /> : <Moon size={17} />}</button><button className="header-notification" aria-label="View notifications" onClick={() => navigate(pathFor(`/${role}/notifications`))}><Bell size={17} /><i /></button><span className="header-divider" /><span className="header-date">{date}</span><span className="header-avatar">{role === 'patient' ? 'MF' : role === 'doctor' ? 'AR' : 'AM'}</span></div></header>
-      <main className="portal-content"><DemoBanner />{page === 'dashboard' ? <Dashboard role={role} appointments={appointments} onBook={() => role === 'patient' ? openBooking() : navigate(pathFor(`/${role}/${role === 'doctor' ? 'schedule' : 'appointments'}`))} /> : role === 'patient' && page === 'doctors' ? <><div className="page-heading"><div><div className="eyebrow eyebrow-muted">YOUR CARE TEAM</div><h1>{routeTitles.doctors.title}</h1><p>{routeTitles.doctors.subtitle}</p></div><Button onClick={() => openBooking()}>Book an appointment <ArrowRight size={15} /></Button></div><DoctorDirectory onBook={openBooking} search={search} doctors={liveDoctors} loading={!demo && doctorsLoading} error={!demo ? doctorsError : ''} demo={demo} /></> : (role === 'patient' && page === 'appointments' || role === 'doctor' && ['appointments','schedule','patients'].includes(page) || role === 'admin' && ['appointments','doctors','patients','departments','blood-requests','staff','audit-logs'].includes(page)) ? <GeneralListPage role={role} page={page} search={search} /> : (page === 'blood-availability' || page === 'blood-bank') ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div><span className="demo-pill"><span /> {demo ? 'SAMPLE INVENTORY' : 'LIVE INVENTORY'}</span></div><BloodAvailability admin={role === 'admin'} demo={demo} /></> : (page === 'bed-availability' || page === 'wards' || page === 'beds') ? <><div className="list-page-intro"><div><h1>{page === 'bed-availability' ? routeTitles['bed-availability'].title : 'Wards & beds'}</h1><p>{routeTitles['bed-availability'].subtitle}</p></div>{role === 'admin' && <Button onClick={() => notify('Ward setup will be available when operations services are connected.')}>+ Add ward</Button>}</div><BedAvailability admin={role === 'admin'} demo={demo} /></> : page === 'ai-assistant' ? <><div className="page-heading"><div><div className="eyebrow eyebrow-muted">A LITTLE HELP, WHEN YOU NEED IT</div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div><span className="demo-pill"><span /> {demo ? 'PREVIEW MODE' : 'AI SERVICE'}</span></div><AssistantPreview demo={demo} /></> : page === 'profile' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div></div><ProfilePage role={role} /></> : page === 'notifications' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div><span className="demo-pill"><span /> SAMPLE UPDATES</span></div><NotificationsPage /></> : page === 'settings' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div></div><SettingsPage /></> : page === 'reports' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div><button className="export-button" onClick={() => notify('Report export will be available when reports connect to the hospital database.')}><FileDown size={15} /> Export</button></div><ReportsPage /></> : <Navigate to={pathFor(`/${role}/dashboard`)} replace />}</main>
-    </div><BookModal open={bookingOpen} doctor={selectedDoctor} doctors={liveDoctors} demo={demo} onClose={() => setBookingOpen(false)} onBook={(appointment) => setAppointments((existing) => [appointment, ...existing])} />
+    <div className="portal-main"><header className="portal-header"><button className="mobile-nav-toggle header-menu" aria-label="Open navigation" onClick={() => setMenuOpen(true)}><Menu size={20} /></button><div className="portal-breadcrumb"><Link to={pathFor(`/${role}/dashboard`)}>Workspace</Link><ChevronRight size={14} /><span>{page === 'dashboard' ? 'Overview' : pageTitle}</span></div><div className="portal-header-actions"><label className="portal-search"><Search size={16} /><input placeholder="Search this workspace…" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search workspace" /><kbd>⌘ K</kbd></label><button className="theme-toggle" onClick={() => setDark(!dark)} aria-label={dark ? 'Switch to light theme' : 'Switch to dark theme'}>{dark ? <Sun size={17} /> : <Moon size={17} />}</button>{role === 'patient' && <button className="header-notification" aria-label="View notifications" onClick={() => navigate(pathFor(`/${role}/notifications`))}><Bell size={17} /><i /></button>}<span className="header-divider" /><span className="header-date">{date}</span><span className="header-avatar">{demo ? (role === 'patient' ? 'MF' : role === 'doctor' ? 'AR' : 'AM') : userInitials(user?.email)}</span></div></header>
+      <main className="portal-content">
+        {demo && <DemoBanner />}
+        {!demo && appointmentsError && <p className="field-error" role="alert">{appointmentsError}</p>}
+        {page === 'dashboard' ? <Dashboard role={role} appointments={appointments} appointmentRecords={appointmentRecords} doctors={liveDoctors} onBook={() => role === 'patient' ? openBooking() : navigate(pathFor(`/${role}/${role === 'doctor' ? 'schedule' : 'appointments'}`))} demo={demo} loadingAppointments={!demo && appointmentsLoading} user={user} routeFor={(target) => pathFor(`/${role}/${target}`)} />
+          : role === 'patient' && page === 'doctors' ? <><div className="page-heading"><div><div className="eyebrow eyebrow-muted">YOUR CARE TEAM</div><h1>{routeTitles.doctors.title}</h1><p>{routeTitles.doctors.subtitle}</p></div><Button onClick={() => openBooking()}>Book an appointment <ArrowRight size={15} /></Button></div><DoctorDirectory onBook={openBooking} search={search} doctors={liveDoctors} loading={!demo && doctorsLoading} error={!demo ? doctorsError : ''} demo={demo} /></>
+          : role === 'admin' && !demo && (page === 'doctors' || page === 'staff') ? <AdminDoctorsPage search={search} staff={page === 'staff'} />
+          : role === 'admin' && !demo && page === 'departments' ? <AdminDepartmentsPage search={search} />
+          : role === 'admin' && !demo && page === 'patients' ? <ServiceUnavailablePage title="Patient directory" detail="Patient records are protected and require an administrator-only listing endpoint." icon={Users} />
+          : role === 'admin' && !demo && page === 'blood-requests' ? <ServiceUnavailablePage title="Blood requests" detail="Blood stock availability is connected. Request queue records and approvals are not exposed by the current backend." icon={HeartPulse} />
+          : role === 'admin' && !demo && page === 'audit-logs' ? <ServiceUnavailablePage title="Audit log" detail="The backend writes audit entries, but it does not yet expose a read-only audit history endpoint." icon={ShieldCheck} />
+          : (role === 'patient' && page === 'appointments' || role === 'doctor' && ['appointments', 'schedule', 'patients'].includes(page) || role === 'admin' && page === 'appointments' || demo && role === 'admin' && ['appointments', 'doctors', 'patients', 'departments', 'blood-requests', 'staff', 'audit-logs'].includes(page)) ? <GeneralListPage role={role} page={page} search={search} />
+          : (role === 'patient' && page === 'blood-availability' || role === 'admin' && page === 'blood-bank' || demo && role === 'admin' && page === 'blood-availability') ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div><span className="demo-pill"><span /> {demo ? 'SAMPLE INVENTORY' : 'LIVE INVENTORY'}</span></div><BloodAvailability admin={role === 'admin'} demo={demo} /></>
+          : (role === 'patient' && page === 'bed-availability' || role === 'admin' && ['wards', 'beds'].includes(page) || demo && role === 'admin' && page === 'bed-availability') ? <><div className="list-page-intro"><div><h1>{page === 'bed-availability' ? routeTitles['bed-availability'].title : 'Wards & beds'}</h1><p>{routeTitles['bed-availability'].subtitle}</p></div></div><BedAvailability admin={role === 'admin'} demo={demo} /></>
+          : role === 'patient' && page === 'ai-assistant' ? <><div className="page-heading"><div><div className="eyebrow eyebrow-muted">A LITTLE HELP, WHEN YOU NEED IT</div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div><span className="demo-pill"><span /> {demo ? 'PREVIEW MODE' : 'AI SERVICE'}</span></div><AssistantPreview demo={demo} /></>
+          : page === 'profile' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div></div><ProfilePage role={role} demo={demo} user={user} /></>
+          : role === 'patient' && page === 'notifications' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div><span className="demo-pill"><span /> {demo ? 'SAMPLE UPDATES' : 'NO FEED CONNECTED'}</span></div><NotificationsPage demo={demo} /></>
+          : role === 'admin' && page === 'settings' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div></div><SettingsPage role={role} demo={demo} /></>
+          : role === 'admin' && page === 'reports' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{demo ? routeTitles[page].subtitle : 'Current record counts from connected services.'}</p></div></div><ReportsPage demo={demo} appointments={appointments} doctors={liveDoctors} /></>
+          : <Navigate to={pathFor(`/${role}/dashboard`)} replace />}
+      </main>
+    </div><BookModal open={bookingOpen} doctor={selectedDoctor} doctors={liveDoctors} demo={demo} onClose={() => setBookingOpen(false)} onBook={(appointment, record) => { setAppointments((existing) => [appointment, ...existing]); if (record) setAppointmentRecords((existing) => [record, ...existing]) }} />
   </div>
 }
 
@@ -608,7 +885,7 @@ function App() {
   const [toast, setToast] = useState('')
   const dismiss = () => setToast('')
   const notify = (message: string) => setToast(message)
-  return <AuthProvider><ToastContext.Provider value={notify}><Routes><Route path="/" element={<LandingPage />} /><Route path="/features" element={<InfoPage page="features" />} /><Route path="/about" element={<InfoPage page="about" />} /><Route path="/contact" element={<InfoPage page="contact" />} /><Route path="/login" element={<AuthPage kind="login" />} /><Route path="/register" element={<AuthPage kind="register" />} /><Route path="/forgot-password" element={<AuthPage kind="forgot" />} /><Route path="/patient/*" element={<PortalGate role="patient" />} /><Route path="/doctor/*" element={<PortalGate role="doctor" />} /><Route path="/admin/*" element={<PortalGate role="admin" />} /><Route path="/demo/patient/*" element={<PortalLayout role="patient" demo />} /><Route path="/demo/doctor/*" element={<PortalLayout role="doctor" demo />} /><Route path="/demo/admin/*" element={<PortalLayout role="admin" demo />} /><Route path="*" element={<Navigate to="/" replace />} /></Routes>{toast && <Toast message={toast} onDismiss={dismiss} />}</ToastContext.Provider></AuthProvider>
+  return <AuthProvider><ToastContext.Provider value={notify}><Routes><Route path="/" element={<LandingPage />} /><Route path="/features" element={<InfoPage page="features" />} /><Route path="/about" element={<InfoPage page="about" />} /><Route path="/contact" element={<InfoPage page="contact" />} /><Route path="/login" element={<AuthPage kind="login" />} /><Route path="/register" element={<AuthPage kind="register" />} /><Route path="/forgot-password" element={<AuthPage kind="forgot" />} /><Route path="/12admin/sign-in" element={<AuthPage kind="login" adminOnly />} /><Route path="/12admin/forgot-password" element={<AuthPage kind="forgot" adminOnly />} /><Route path="/12admin/*" element={<PortalGate role="admin" />} /><Route path="/patient/*" element={<PortalGate role="patient" />} /><Route path="/doctor/*" element={<PortalGate role="doctor" />} /><Route path="/admin/*" element={<LegacyAdminRedirect />} /><Route path="/demo/patient/*" element={<PortalLayout role="patient" demo />} /><Route path="/demo/doctor/*" element={<PortalLayout role="doctor" demo />} /><Route path="/demo/admin/*" element={<PortalLayout role="admin" demo />} /><Route path="*" element={<Navigate to="/" replace />} /></Routes>{toast && <Toast message={toast} onDismiss={dismiss} />}</ToastContext.Provider></AuthProvider>
 }
 
 export default App
