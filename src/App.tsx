@@ -1,4 +1,4 @@
-import { useEffect, useState, createContext, useContext, type ButtonHTMLAttributes, type FormEvent, type InputHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useState, useRef, createContext, useContext, type ButtonHTMLAttributes, type FormEvent, type InputHTMLAttributes, type ReactNode } from 'react'
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router'
 import { motion } from 'motion/react'
 import { z } from 'zod'
@@ -21,8 +21,8 @@ import {
   Activity, ArrowDownRight, ArrowRight, ArrowUpRight, BadgeCheck, BedDouble, Bell,
   BriefcaseMedical, CalendarDays, ChartNoAxesCombined, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleHelp,
   Clock3, Droplets, FileDown, Filter, Heart, HeartPulse, LayoutGrid, LockKeyhole,
-  LogOut, Menu, Moon, MoreHorizontal, Search, Send, Settings2, Shield,
-  ShieldCheck, Sparkles, Stethoscope, Sun, Users, X, Zap,
+  LogOut, Menu, Mic, MicOff, Moon, MoreHorizontal, Search, Send, Settings2, Shield,
+  ShieldCheck, Sparkles, Stethoscope, Sun, Users, Volume2, VolumeX, X, Zap,
   type LucideIcon,
 } from 'lucide-react'
 import {
@@ -296,6 +296,21 @@ function Dashboard({ role, appointments, appointmentRecords = [], doctors = [], 
   const occupancy = totalBeds ? Math.round(occupiedBeds / totalBeds * 100) : 0
   return <>
     <div className="page-heading"><div><div className="eyebrow eyebrow-muted">{new Intl.DateTimeFormat('en', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date())}</div><h1>{greeting}</h1><p>{description}</p></div><Button onClick={onBook}><CalendarDays size={16} /> {patient ? 'Book an appointment' : doctor ? 'View schedule' : 'Appointments'} <ArrowRight size={15} /></Button></div>
+    {patient && (
+      <div className="patient-ai-hero-card">
+        <div className="patient-ai-hero-content">
+          <span className="patient-ai-badge"><Sparkles size={14} /> MEDINEX SMART VOICE &amp; HEALTH CONCIERGE</span>
+          <h2>Tell us what&apos;s hurting or ask about hospital services</h2>
+          <p>Consult in Hinglish, Hindi, or English. Instant doctor triage, live appointment slot booking, bed capacity &amp; blood bank inquiries.</p>
+          <div className="patient-ai-chips">
+            <Link to={routeFor('ai-assistant')} className="btn-primary-voice" style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', background: '#39a393', color: '#fff', padding: '8px 15px', borderRadius: '12px', fontSize: '12.5px', fontWeight: 600, textDecoration: 'none' }}><Mic size={14} /> Open Voice Companion</Link>
+            <Link to={routeFor('ai-assistant')} style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.22)', color: '#fff', padding: '8px 15px', borderRadius: '12px', fontSize: '12.5px', fontWeight: 550, textDecoration: 'none' }}><BedDouble size={14} /> Live Bed Status</Link>
+            <Link to={routeFor('ai-assistant')} style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.22)', color: '#fff', padding: '8px 15px', borderRadius: '12px', fontSize: '12.5px', fontWeight: 550, textDecoration: 'none' }}><Droplets size={14} /> Blood Stock</Link>
+            <Link to={routeFor('ai-assistant')} style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.22)', color: '#fff', padding: '8px 15px', borderRadius: '12px', fontSize: '12.5px', fontWeight: 550, textDecoration: 'none' }}><Stethoscope size={14} /> Triage Symptoms</Link>
+          </div>
+        </div>
+      </div>
+    )}
     <div className="metrics-grid">{metrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}</div>
     <div className="dashboard-main-grid"><section className="panel chart-panel"><SectionTitle title={demo ? patient ? 'Your care activity' : 'Appointments this week' : 'Live operations'} /><div className="chart-legend">{demo ? <><span><i /> Appointments</span><span><i className="legend-soft" /> Admissions</span></> : <span><i /> Current connected data</span>}</div><div className="chart-area">{demo ? <ActivityChart includeAdmissions /> : <div className="chart-empty"><Sparkles size={19} /><strong>Live records are ready</strong><span>Historical charts need a reporting endpoint. Current appointments, doctors and availability are shown in this workspace.</span></div>}</div></section>
       <section className="panel capacity-panel"><SectionTitle title={patient ? 'Care at a glance' : 'Capacity at a glance'} action={<Link className="icon-link" to={routeFor(patient ? 'bed-availability' : 'wards')}><ArrowRight size={15} /></Link>} /><div className="capacity-total"><strong>{demo ? '74' : loadingResources ? '…' : totalBeds ? occupancy : '—'}{(demo || !loadingResources && totalBeds > 0) && <span>%</span>}</strong><span>aggregate occupancy</span></div><div className="capacity-ring-wrap"><div className="capacity-ring" style={!demo && !loadingResources ? { background: `conic-gradient(#58a095 0 ${occupancy}%, #e7efed ${occupancy}% 100%)` } : undefined}><div><strong>{demo ? '34' : loadingResources ? '…' : availableBeds}</strong><span>available</span></div></div></div><div className="capacity-legend"><span><i className="cap-used" /> Occupied <b>{demo ? '90' : loadingResources ? '…' : occupiedBeds}</b></span><span><i className="cap-free" /> Available <b>{demo ? '34' : loadingResources ? '…' : availableBeds}</b></span></div><div className="capacity-caption"><span><LockKeyhole size={12} /> {demo ? 'Aggregate sample count' : resourceError ? 'Hospital resources unavailable' : 'Aggregate hospital inventory'}</span></div></section></div>
@@ -745,35 +760,405 @@ function AdminAuditLogsPage({ search }: { search: string }) {
   </>
 }
 
-function AssistantPreview({ demo = false }: { demo?: boolean }) {
-  const [messages, setMessages] = useState<{ from: 'assistant' | 'user'; text: string }[]>([
-    { from: 'assistant', text: 'Hi. I can help you find hospital services and answer questions using available hospital information. I can’t diagnose or prescribe.' },
+function AssistantPreview({ demo = false, onBookSuccess }: { demo?: boolean; onBookSuccess?: (record?: AppointmentRecord) => void }) {
+  const [messages, setMessages] = useState<Array<{
+    id: string
+    from: 'assistant' | 'user'
+    text: string
+    time: string
+    action?: any
+  }>>([
+    {
+      id: 'init-1',
+      from: 'assistant',
+      text: 'Namaste! Main **Medinex AI Smart Voice & Health Companion** hoon. 🙏\n\nAap mic daba kar bol sakte hain ya niche diye gaye quick options chun sakte hain — jaise apne lakshan (symptoms) batana, doctor dhoondhna, beds aur blood bank stock check karna.',
+      time: 'Just now',
+    },
   ])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [isListening, setIsListening] = useState(false)
+  const [voiceEnabled, setVoiceEnabled] = useState(true)
+  const [selectedSlot, setSelectedSlot] = useState<string>('')
+  const [bookingBusy, setBookingBusy] = useState(false)
   const { token } = useAuth()
-  const send = async (event: FormEvent) => {
-    event.preventDefault()
-    const userText = input.trim()
-    if (!userText || sending) return
-    setInput('')
-    setMessages((current) => [...current, { from: 'user', text: userText }, { from: 'assistant', text: 'Thinking…' }])
-    if (demo || !token) {
-      setMessages((current) => [...current.slice(0, -1), { from: 'assistant', text: 'This is a demo workspace. Sign in to use the live assistant; its hospital data and Gemini service must be configured by the administrator.' }])
+  const notify = useToast()
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const recognitionRef = useRef<any>(null)
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, sending])
+
+  useEffect(() => {
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (SpeechRec) {
+      try {
+        const recognition = new SpeechRec()
+        recognition.continuous = false
+        recognition.interimResults = false
+        recognition.lang = 'hi-IN'
+        recognition.onstart = () => setIsListening(true)
+        recognition.onend = () => setIsListening(false)
+        recognition.onerror = () => setIsListening(false)
+        recognition.onresult = (event: any) => {
+          const transcript = event.results?.[0]?.[0]?.transcript
+          if (transcript) {
+            setInput(transcript)
+            void sendMessage(transcript)
+          }
+        }
+        recognitionRef.current = recognition
+      } catch {
+        // Speech recognition initialization fallback
+      }
+    }
+  }, [])
+
+  const toggleListening = () => {
+    if (!recognitionRef.current) {
+      notify('Voice recognition is best supported in Google Chrome or Microsoft Edge.')
       return
     }
+    if (isListening) {
+      recognitionRef.current.stop()
+    } else {
+      try {
+        recognitionRef.current.start()
+      } catch {
+        recognitionRef.current.stop()
+      }
+    }
+  }
+
+  const speakText = (text: string) => {
+    if (!voiceEnabled || !('speechSynthesis' in window)) return
+    try {
+      window.speechSynthesis.cancel()
+      const clean = text.replace(/[*#•_`]/g, '').slice(0, 220)
+      const utterance = new SpeechSynthesisUtterance(clean)
+      utterance.rate = 1.05
+      utterance.pitch = 1.0
+      window.speechSynthesis.speak(utterance)
+    } catch {
+      // Audio synthesis fallback
+    }
+  }
+
+  const sendMessage = async (customText?: string) => {
+    const query = (customText ?? input).trim()
+    if (!query || sending) return
+    setInput('')
+    const timeStr = new Intl.DateTimeFormat('en', { hour: 'numeric', minute: 'numeric' }).format(new Date())
+
+    setMessages((prev) => [
+      ...prev,
+      { id: `user-${Date.now()}`, from: 'user', text: query, time: timeStr },
+      { id: 'pending-ai', from: 'assistant', text: 'Hospital database aur services se verify kiya ja raha hai…', time: 'Just now' },
+    ])
+
+    if (demo || !token) {
+      setTimeout(() => {
+        setMessages((prev) => [
+          ...prev.filter((m) => m.id !== 'pending-ai'),
+          {
+            id: `demo-${Date.now()}`,
+            from: 'assistant',
+            text: 'Yeh demo preview hai. Real-time doctor slots aur bookings live patient account mein available hain.',
+            time: timeStr,
+          },
+        ])
+      }, 350)
+      return
+    }
+
     setSending(true)
     try {
-      const response = await askAssistant(userText, token)
-      setMessages((current) => [...current.slice(0, -1), { from: 'assistant', text: response.reply }])
+      const response = await askAssistant(query, token)
+      setMessages((prev) => [
+        ...prev.filter((m) => m.id !== 'pending-ai'),
+        {
+          id: `asst-${Date.now()}`,
+          from: 'assistant',
+          text: response.reply,
+          time: timeStr,
+          action: response.action,
+        },
+      ])
+      speakText(response.reply)
+      if (response.action?.type === 'doctor_slots' && response.action.slots?.length) {
+        setSelectedSlot(response.action.slots[0].start_at)
+      }
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : 'The assistant is unavailable right now.'
-      setMessages((current) => [...current.slice(0, -1), { from: 'assistant', text: message }])
+      const msg = cause instanceof Error ? cause.message : 'Could not contact assistant.'
+      setMessages((prev) => [
+        ...prev.filter((m) => m.id !== 'pending-ai'),
+        { id: `err-${Date.now()}`, from: 'assistant', text: msg, time: timeStr },
+      ])
     } finally {
       setSending(false)
     }
   }
-  return <div className="assistant-layout"><div className="assistant-intro panel"><div className="assistant-emblem"><Sparkles size={21} /></div><div className="eyebrow eyebrow-muted">MEDINEX AI · {demo ? 'PREVIEW' : 'ASSISTANT'}</div><h2>Here to help you<br />find your next step.</h2><p>A multilingual assistant designed to help people navigate appointments, hospital services and common questions.</p><div className="assistant-capabilities"><span><CheckCircle2 size={15} /> English, Hindi & Hinglish</span><span><CheckCircle2 size={15} /> Appointment guidance</span><span><CheckCircle2 size={15} /> Clear handoff to care teams</span></div><div className="assistant-safety"><ShieldCheck size={16} /><p>Not for diagnosis or medical advice. For urgent symptoms, contact local emergency services or your care team.</p></div></div><section className="chat-panel panel"><div className="chat-header"><div><span className="chat-avatar"><Sparkles size={16} /></span><span><strong>Medinex assistant</strong><small><i /> {demo ? 'Demo mode' : 'Connected to Medinex API'}</small></span></div><button className="icon-link" aria-label="Conversation information"><CircleHelp size={17} /></button></div><div className="chat-transcript" aria-live="polite">{messages.map((message, index) => <div className={`chat-message message-${message.from}`} key={index}><span className="chat-message-icon">{message.from === 'assistant' ? <Sparkles size={14} /> : 'M'}</span><p>{message.text}</p></div>)}</div><div className="suggested-prompts"><span>TRY ASKING</span><button type="button" onClick={() => setInput('Find a cardiologist')}>Find a cardiologist</button><button type="button" onClick={() => setInput('Are ICU beds available?')}>Check bed availability</button></div><form className="chat-compose" onSubmit={send}><input aria-label="Message the Medinex assistant" value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask about appointments or services…" disabled={sending} /><button aria-label="Send message" type="submit" disabled={sending || !input.trim()}><Send size={16} /></button></form><p className="chat-disclaimer">Replies use the hospital assistant service when configured. Do not share unnecessary medical identifiers.</p></section></div>
+
+  const bookDirect = async (doctorId: string, startAt: string, doctorName: string) => {
+    if (!token || !startAt || bookingBusy) return
+    setBookingBusy(true)
+    try {
+      const record = await bookAppointment({ doctor_id: doctorId, start_at: startAt }, token)
+      notify(`Appointment confirmed with ${doctorName}!`)
+      onBookSuccess?.(record)
+      const timeStr = new Intl.DateTimeFormat('en', { hour: 'numeric', minute: 'numeric' }).format(new Date())
+      const formattedDate = new Date(startAt).toLocaleDateString('en-IN', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `confirm-${Date.now()}`,
+          from: 'assistant',
+          text: `🎉 **Appointment Confirmed!**\n\nAapka appointment **${doctorName}** ke sath **${formattedDate}** ko successfully book ho gaya hai.\n\nBooking ID: **APT-${record.id.slice(0, 8).toUpperCase()}**\nYeh appointment aapke dashboard par add ho chuka hai.`,
+          time: timeStr,
+        },
+      ])
+      speakText(`Aapka appointment ${doctorName} ke sath confirm ho gaya hai.`)
+    } catch (cause) {
+      const err = cause instanceof Error ? cause.message : 'Could not book this appointment slot.'
+      notify(err)
+    } finally {
+      setBookingBusy(false)
+    }
+  }
+
+  const quickPrompts = [
+    { label: '🛏️ Live Beds', query: 'Hospital mein kitne beds khali hain?' },
+    { label: '🩸 Blood Stock', query: 'O+ blood stock kitna hai?' },
+    { label: '🩺 Sir Dard / Migraine', query: 'Mujhe 2 din se sar dard ho raha hai' },
+    { label: '❤️ Chest Pain / Dil', query: 'Chhati mein dard ho raha hai doctor dikhao' },
+    { label: '👶 Bachon ke Doctor', query: 'Bachon ke specialist pediatrician se milna hai' },
+    { label: '🦴 Haddi / Joint Pain', query: 'Kamar aur ghutne mein dard hai' },
+    { label: '🤒 Bukhar / Fever', query: 'Mujhe bukhar aur sardi hai' },
+  ]
+
+  return (
+    <div className="voice-assistant-grid">
+      <div className="assistant-console">
+        <div className="console-header">
+          <div className="console-title-group">
+            <span className="console-bot-avatar"><Sparkles size={18} /></span>
+            <div>
+              <strong>Medinex Voice &amp; Health Companion</strong>
+              <small><i /> {demo ? 'Preview Mode' : 'Connected to Verified Neon DB'}</small>
+            </div>
+          </div>
+          <div className="console-controls">
+            <button
+              type="button"
+              className={`console-icon-btn ${voiceEnabled ? 'active' : ''}`}
+              title={voiceEnabled ? 'Voice reply ON' : 'Voice reply MUTED'}
+              onClick={() => setVoiceEnabled(!voiceEnabled)}
+            >
+              {voiceEnabled ? <Volume2 size={15} /> : <VolumeX size={15} />}
+              <span>{voiceEnabled ? 'Audio ON' : 'Mute'}</span>
+            </button>
+            <span className="demo-pill" style={{ margin: 0 }}><span /> HINGLISH / EN</span>
+          </div>
+        </div>
+
+        <div className="console-chips-bar" role="toolbar" aria-label="Quick inquiry chips">
+          <span className="chip-label">Quick:</span>
+          {quickPrompts.map((p) => (
+            <button
+              key={p.label}
+              type="button"
+              className="quick-chip"
+              onClick={() => void sendMessage(p.query)}
+              disabled={sending}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="console-messages" aria-live="polite">
+          {messages.map((msg) => (
+            <div key={msg.id} className={`chat-row chat-row-${msg.from}`}>
+              <span className="chat-row-avatar">
+                {msg.from === 'assistant' ? <Sparkles size={15} /> : 'Me'}
+              </span>
+              <div className="chat-bubble">
+                {msg.text.split('\n\n').map((paragraph, i) => (
+                  <p key={i} dangerouslySetInnerHTML={{
+                    __html: paragraph
+                      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                      .replace(/^• /gm, '&bull; ')
+                      .replace(/\n/g, '<br/>')
+                  }} />
+                ))}
+
+                {/* Doctor Slot Booking Interactive Card */}
+                {msg.action?.type === 'doctor_slots' && msg.action.doctor && (
+                  <div className="chat-action-card">
+                    <div className="action-card-header">
+                      <h4>🩺 {msg.action.doctor.name}</h4>
+                      <span>₹{msg.action.doctor.consultation_fee || '600'}</span>
+                    </div>
+                    <div className="action-card-details">
+                      <strong>Specialty:</strong> {msg.action.doctor.specialization} &bull; {msg.action.doctor.department || 'Department'}<br />
+                      <strong>Date:</strong> {new Date(msg.action.date).toLocaleDateString('en-IN', { weekday: 'long', month: 'short', day: 'numeric' })}
+                    </div>
+
+                    {msg.action.slots && msg.action.slots.length > 0 ? (
+                      <>
+                        <div className="action-slots-title">Select Time Slot:</div>
+                        <div className="action-slots-grid">
+                          {msg.action.slots.map((slot: any) => {
+                            const timeLabel = new Date(slot.start_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+                            const isSelected = selectedSlot === slot.start_at
+                            return (
+                              <button
+                                key={slot.start_at}
+                                type="button"
+                                className={`slot-select-btn ${isSelected ? 'selected' : ''}`}
+                                onClick={() => setSelectedSlot(slot.start_at)}
+                              >
+                                {timeLabel}
+                              </button>
+                            )
+                          })}
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-confirm-booking"
+                          disabled={!selectedSlot || bookingBusy}
+                          onClick={() => void bookDirect(msg.action.doctor.doctor_id, selectedSlot, msg.action.doctor.name)}
+                        >
+                          <CheckCircle2 size={16} />
+                          {bookingBusy ? 'Confirming booking…' : `Confirm Appointment for ${new Date(selectedSlot || msg.action.slots[0].start_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}`}
+                        </button>
+                      </>
+                    ) : (
+                      <p className="inventory-footnote" style={{ color: '#c0504d' }}>All slots booked for this date. Ask for another date.</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Bed Capacity Interactive Card */}
+                {msg.action?.type === 'beds' && msg.action.data?.wards && (
+                  <div className="chat-action-card">
+                    <div className="action-card-header">
+                      <h4>🏥 Hospital Ward Capacity</h4>
+                      <span>Verified Live</span>
+                    </div>
+                    <div className="bed-summary-grid">
+                      {msg.action.data.wards.map((w: any) => (
+                        <div key={w.ward} className="bed-card-pill">
+                          <strong>{w.ward}</strong>
+                          <span>{w.available_beds} open / {w.total_beds}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Blood Bank Interactive Card */}
+                {msg.action?.type === 'blood' && msg.action.data?.inventory && (
+                  <div className="chat-action-card">
+                    <div className="action-card-header">
+                      <h4>🩸 Tested Blood Inventory</h4>
+                      <span>Tested &amp; Unexpired</span>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                      {msg.action.data.inventory.map((item: any, idx: number) => (
+                        <span key={idx} style={{ background: '#fdf2f2', border: '1px solid #f9d2d0', color: '#b52c26', padding: '4px 10px', borderRadius: '14px', fontSize: '11.5px', fontWeight: 600 }}>
+                          {item.blood_group} {item.component.replace('_', ' ')}: {item.units_available} units
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <span className="chat-time">{msg.time}</span>
+              </div>
+            </div>
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+
+        <div className="console-compose-area">
+          {isListening && (
+            <div className="listening-wave-bar">
+              <Mic size={15} />
+              <span>Listening to your voice… bolna shuru karein (Tap mic again to stop)</span>
+            </div>
+          )}
+          <form
+            className="console-compose-form"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void sendMessage()
+            }}
+          >
+            <button
+              type="button"
+              className={`btn-mic-toggle ${isListening ? 'recording' : ''}`}
+              title={isListening ? 'Stop Listening' : 'Tap to Speak (Voice Mode)'}
+              onClick={toggleListening}
+            >
+              {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+            </button>
+            <input
+              className="compose-input"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask anything or click mic to speak (e.g. 'Sar dard ho raha hai', 'ICU beds?')"
+              disabled={sending}
+            />
+            <button
+              type="submit"
+              className="btn-send-message"
+              disabled={sending || !input.trim()}
+              aria-label="Send message"
+            >
+              <Send size={16} />
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {/* Desktop & Laptop Companion Sidebar */}
+      <aside className="desktop-companion-panel">
+        <div className="companion-card companion-card-emergency">
+          <div className="emergency-top">
+            <HeartPulse size={18} />
+            <span>Emergency Assistance</span>
+          </div>
+          <p className="emergency-text">
+            For sudden severe chest pain, breathing difficulty, or uncontrolled bleeding, do not wait for a routine slot.
+          </p>
+          <div className="emergency-numbers">
+            <a href="tel:108" className="emergency-pill">Dial 108</a>
+            <a href="tel:112" className="emergency-pill" style={{ background: '#2c5d57' }}>Dial 112</a>
+          </div>
+        </div>
+
+        <div className="companion-card">
+          <h3><Sparkles size={16} /> How to Talk with AI</h3>
+          <ul className="voice-tip-list">
+            <li><strong>Tap the Mic:</strong> Speak naturally in Hindi, Hinglish, or English.</li>
+            <li><strong>Explain Symptoms:</strong> *&quot;Mujhe 2 din se bukhar aur sardi hai&quot;* &rarr; Recommends doctor.</li>
+            <li><strong>Check Resources:</strong> *&quot;ICU bed khali hai kya?&quot;* ya *&quot;O+ blood kitna hai?&quot;*</li>
+            <li><strong>1-Tap Booking:</strong> Select your slot right inside the chat card.</li>
+          </ul>
+        </div>
+
+        <div className="companion-card">
+          <h3><ShieldCheck size={16} /> Hospital Verified Facts</h3>
+          <p style={{ fontSize: '12px', color: '#5a7371', lineHeight: '1.5', margin: 0 }}>
+            Medinex AI answers strictly from live PostgreSQL databases. No hallucinations, no arbitrary slot claims.
+          </p>
+        </div>
+      </aside>
+    </div>
+  )
 }
 
 type ListRow = { name: string; detail: string; date: string; status: string; ref: string; id?: string }
@@ -1034,7 +1419,7 @@ function PortalLayout({ role, demo = false }: { role: PortalRole; demo?: boolean
           : (role === 'patient' && page === 'appointments' || role === 'doctor' && ['appointments', 'schedule', 'patients'].includes(page) || role === 'admin' && page === 'appointments' || demo && role === 'admin' && ['appointments', 'doctors', 'patients', 'departments', 'blood-requests', 'staff', 'audit-logs'].includes(page)) ? <GeneralListPage role={role} page={page} search={search} />
           : (role === 'patient' && page === 'blood-availability' || role === 'admin' && page === 'blood-bank' || demo && role === 'admin' && page === 'blood-availability') ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div><span className="demo-pill"><span /> {demo ? 'SAMPLE INVENTORY' : 'LIVE INVENTORY'}</span></div><BloodAvailability admin={role === 'admin'} demo={demo} /></>
           : (role === 'patient' && page === 'bed-availability' || role === 'admin' && ['wards', 'beds'].includes(page) || demo && role === 'admin' && page === 'bed-availability') ? <><div className="list-page-intro"><div><h1>{page === 'bed-availability' ? routeTitles['bed-availability'].title : 'Wards & beds'}</h1><p>{routeTitles['bed-availability'].subtitle}</p></div></div><BedAvailability admin={role === 'admin'} demo={demo} /></>
-          : role === 'patient' && page === 'ai-assistant' ? <><div className="page-heading"><div><div className="eyebrow eyebrow-muted">A LITTLE HELP, WHEN YOU NEED IT</div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div><span className="demo-pill"><span /> {demo ? 'PREVIEW MODE' : 'AI SERVICE'}</span></div><AssistantPreview demo={demo} /></>
+          : role === 'patient' && page === 'ai-assistant' ? <><div className="page-heading"><div><div className="eyebrow eyebrow-muted">INTELLIGENT HOSPITAL CONCIERGE</div><h1>Smart Voice &amp; Health Companion</h1><p>Speak or chat to triage symptoms, consult specialists, and check hospital capacity in real time.</p></div><span className="demo-pill"><span /> {demo ? 'PREVIEW MODE' : 'LIVE ASSISTANT'}</span></div><AssistantPreview demo={demo} onBookSuccess={(record) => { if (record) setAppointmentRecords((existing) => [record, ...existing]) }} /></>
           : page === 'profile' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div></div><ProfilePage role={role} demo={demo} user={user} /></>
           : page === 'notifications' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div><span className="demo-pill"><span /> {demo ? 'SAMPLE UPDATES' : 'LIVE UPDATES'}</span></div><NotificationsPage demo={demo} onUnreadChange={setUnreadNotifications} /></>
           : role === 'admin' && page === 'settings' ? <><div className="list-page-intro"><div><h1>{routeTitles[page].title}</h1><p>{routeTitles[page].subtitle}</p></div></div><SettingsPage role={role} demo={demo} /></>

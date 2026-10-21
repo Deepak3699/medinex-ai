@@ -1,5 +1,7 @@
 # Medinex AI
 
+> 🚀 **Quick Start & Evaluation Guide:** For direct step-by-step instructions, login URLs, and all seeded credentials (Admin, Doctor, Patient), please see [HOW_TO_RUN.md](file:///e:/PROJECTS/7th%20projects/Medinex%20Ai/medinex-ai/HOW_TO_RUN.md).
+
 Medinex AI is a hospital operations platform with a conversational assistant at its center. The assistant is designed to answer from verified hospital data and use backend tools for doctor search, live appointment slots, bed availability, and tested, unexpired blood inventory. It does not get direct database access and cannot claim that it booked an appointment; booking is a separate authenticated backend action.
 
 ## Project architecture

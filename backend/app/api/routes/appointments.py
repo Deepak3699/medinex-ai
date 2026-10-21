@@ -146,3 +146,41 @@ def cancel_appointment(
     db.commit()
     db.refresh(appointment)
     return appointment
+
+
+@router.post("/{appointment_id}/complete", response_model=AppointmentRead)
+def complete_appointment(
+    appointment_id: UUID,
+    user: User = Depends(require_roles(UserRole.DOCTOR, UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+) -> Appointment:
+    appointment = db.get(Appointment, appointment_id)
+    if appointment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Appointment was not found.")
+
+    if user.role == UserRole.DOCTOR.value:
+        profile = db.scalar(select(DoctorProfile).where(DoctorProfile.user_id == user.id))
+        if profile is None or profile.id != appointment.doctor_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You can only complete your own appointments.")
+
+    if appointment.status == "cancelled":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot complete a cancelled appointment.")
+    if appointment.status == "completed":
+        return appointment
+
+    appointment.status = "completed"
+    db.add(AuditLog(actor_id=user.id, action="appointment.complete", resource_type="appointment", resource_id=str(appointment.id)))
+    db.add(
+        make_notification(
+            appointment.patient.user_id,
+            "appointment",
+            "Consultation completed",
+            f"Your consultation with {appointment.doctor.full_name} has been marked completed.",
+            "appointment",
+            str(appointment.id),
+        )
+    )
+    db.commit()
+    db.refresh(appointment)
+    return appointment
+

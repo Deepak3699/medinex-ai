@@ -205,6 +205,10 @@ export function cancelAppointment(appointmentId: string, token: string): Promise
   return request<AppointmentRecord>(`/appointments/${encodeURIComponent(appointmentId)}/cancel`, { method: 'POST' }, token)
 }
 
+export function completeAppointment(appointmentId: string, token: string): Promise<AppointmentRecord> {
+  return request<AppointmentRecord>(`/appointments/${encodeURIComponent(appointmentId)}/complete`, { method: 'POST' }, token)
+}
+
 export function createDepartment(input: { name: string; location?: string }, token: string): Promise<DepartmentRecord> {
   return request<DepartmentRecord>('/admin/departments', { method: 'POST', body: JSON.stringify(input) }, token)
 }
@@ -271,8 +275,18 @@ export async function registerPatient(input: { name: string; email: string; pass
   })
 }
 
-export function askAssistant(message: string, token: string): Promise<{ reply: string }> {
-  return request<{ reply: string }>('/assistant/chat', {
+export type AssistantAction = {
+  type: string
+  [key: string]: any
+}
+
+export type AssistantResponse = {
+  reply: string
+  action?: AssistantAction | null
+}
+
+export function askAssistant(message: string, token: string): Promise<AssistantResponse> {
+  return request<AssistantResponse>('/assistant/chat', {
     method: 'POST',
     body: JSON.stringify({ message }),
   }, token)

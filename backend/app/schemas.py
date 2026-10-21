@@ -74,6 +74,7 @@ class AssistantChatRequest(BaseModel):
 
 class AssistantChatResponse(BaseModel):
     reply: str
+    action: dict[str, object] | None = None
 
 
 class DepartmentCreate(BaseModel):
